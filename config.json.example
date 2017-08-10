@@ -7,7 +7,7 @@
 	"CacheDir":     "cache",
 	"CacheSize":    40000000000,
 	"DatabaseDir": "db",
-	"FreeSpaceBatchSizeInBytes": 2000,
+	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
 	"SigRequired":	true
 }
