@@ -1,0 +1,13 @@
+{
+	"Listen": 		":8080",
+	"S3Bucket":     "yours3bucketname",
+	"S3AccessKey":  "yours3accesskey",
+	"S3SecretKey":  "yours3secrent",
+	"TmpDir":       "tmp", 
+	"CacheDir":     "cache",
+	"CacheSize":    40000000000,
+	"DatabaseDir": "db",
+	"FreeSpaceBatchSizeInBytes": 2000,
+	"Secret": "",
+	"SigRequired":	true
+}
