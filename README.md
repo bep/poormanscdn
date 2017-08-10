@@ -40,7 +40,7 @@ All configuration is done by editing the `config.json` file. Options:
 
 ## Usage
 
-An S3 URL http://yourbucket.s3.amazonaws.com**/some/path.ext** can be served by poormanscdn by calling http://hostwithpoormanscdn**/some/path.ext?modified=lastmodifiedepochtime**.
+An S3 URL http://yourbucket.s3.amazonaws.com/some/path.ext can be served by poormanscdn by calling http://hostwithpoormanscdn/some/path.ext?modified=lastmodifiedepochtime
 
 Program errors and request errors are written to stderr. All request information is logged to stdout using the combined log format.
 
