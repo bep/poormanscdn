@@ -53,6 +53,23 @@ func GetConfiguration(configPath string) (conf Configuration, err error) {
 	if err != nil {
 		return
 	}
+
+	// check for AWS keys in environment
+	s3AccessKey := os.Getenv("S3AccessKey")
+	if s3AccessKey != "" {
+		conf.S3AccessKey = s3AccessKey
+	}
+
+	s3SecretKey := os.Getenv("S3SecretKey")
+	if s3SecretKey != "" {
+		conf.S3AccessKey = s3SecretKey
+	}
+
+	secret := os.Getenv("SECRET")
+	if secret != "" {
+		conf.Secret = secret
+	}
+
 	if conf.SigRequired && conf.Secret == "" {
 		err = errors.New("sig is required but no secret provided")
 		return

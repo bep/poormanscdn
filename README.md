@@ -1,6 +1,6 @@
 # poormanscdn
 
-poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly performant, very easy to configure (just copy the binary) and can save you a lot of money on S3 bandwidth through caching. If you run poormanscdn on a couple of cheap dedicated servers and round-robin DNS with health-checks, you can have a highly-available CDN for very low cost.   
+poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly performant, very easy to configure (just copy the binary) and can save you a lot of money on S3 bandwidth through caching. If you run poormanscdn on a couple of cheap dedicated servers and round-robin DNS with health-checks, you can have a highly-available CDN for very low cost.
 
 ## Features
 
@@ -17,10 +17,33 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 ```bash
 go get github.com/alexandres/poormanscdn
 cd $GOPATH/src/github.com/alexandres/
-go build
+make
 ```
 
 This builds the `poormanscdn` standalone executable. It expects to find `config.json` in the current working directory.
+
+## running
+
+To keep it up and running across system reboots using [immortal](https://immortal.run)
+
+```yaml
+cmd: /path/to/home/poormanscdn
+cwd: /path/to/home
+env:
+  S3AccessKey: s3-access-key
+  S3SecretKey: s3-secret-key
+  SECRET: secret
+log:
+  file: /var/log/app-1.log
+  age: 86400 # seconds
+  num: 7     # int
+  size: 1    # MegaBytes
+```
+
+To daemonize and test:
+
+    immortal ./poormanscdn
+
 
 ## Configuration
 
@@ -48,7 +71,7 @@ poormanscdn must have write access to CacheDir, DatabaseDir, and TmpDir, which m
 
 ### Cache Invalidation
 
-poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This should be used if your files are immutable. 
+poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This should be used if your files are immutable.
 
 Note: an attacker can invalidate your files by calling download URLs with **modified=timesinceepoch**. To avoid this, please use URL signing as described below.
 
