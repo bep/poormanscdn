@@ -16,7 +16,7 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 
 ```bash
 go get github.com/alexandres/poormanscdn
-cd $GOPATH/src/github.com/alexandres/
+cd $GOPATH/src/github.com/alexandres/poormanscdn
 make
 ```
 
