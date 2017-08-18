@@ -2,7 +2,7 @@
 	"Listen": 		":8080",
 	"S3Bucket":     "yours3bucketname",
 	"S3AccessKey":  "yours3accesskey",
-	"S3SecretKey":  "yours3secrent",
+	"S3SecretKey":  "yours3secret",
 	"TmpDir":       "tmp", 
 	"CacheDir":     "cache",
 	"CacheSize":    40000000000,
