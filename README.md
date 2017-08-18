@@ -1,6 +1,6 @@
 # poormanscdn
 
-poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly performant, very easy to configure (just copy the binary) and can save you a lot of money on S3 bandwidth through caching. If you run poormanscdn on a couple of cheap dedicated servers and round-robin DNS with health-checks, you can have a highly-available CDN for very low cost.   
+poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly performant, very easy to configure (just copy the binary) and can save you a lot of money on S3 bandwidth through caching. If you run poormanscdn on a couple of cheap dedicated servers and round-robin DNS with health-checks, you can have a highly-available CDN for very low cost.
 
 ## Features
 
@@ -17,10 +17,33 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 ```bash
 go get github.com/alexandres/poormanscdn
 cd $GOPATH/src/github.com/alexandres/
-go build
+make
 ```
 
 This builds the `poormanscdn` standalone executable. It expects to find `config.json` in the current working directory.
+
+## Run as a service
+
+To run poormanscdn as a service (persist across reboots), you can use the
+[immortal](https://immortal.run) supervisor. Here is an example immortal
+`run.yml` file
+
+```yaml
+cmd: /path/to/home/poormanscdn
+cwd: /path/to/home
+env:
+  AWS_ACCESS_KEY: aws-access-key
+  AWS_SECRET_ACCESS_KEY: aws-secret-key
+  PCDN_SECRET: pcdn_secret
+log:
+  file: /var/log/poormanscdn.log
+  age: 86400 # seconds
+  num: 7     # int
+  size: 1    # MegaBytes
+```
+
+    immortal -l /var/log/poormanscdn.log ./poormanscdn
+
 
 ## Configuration
 
@@ -48,7 +71,7 @@ poormanscdn must have write access to CacheDir, DatabaseDir, and TmpDir, which m
 
 ### Cache Invalidation
 
-poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This should be used if your files are immutable. 
+poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This should be used if your files are immutable.
 
 Note: an attacker can invalidate your files by calling download URLs with **modified=timesinceepoch**. To avoid this, please use URL signing as described below.
 
