@@ -25,6 +25,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"os"
 )
 
@@ -55,19 +56,22 @@ func GetConfiguration(configPath string) (conf Configuration, err error) {
 	}
 
 	// check for AWS keys in environment
-	s3AccessKey := os.Getenv("S3AccessKey")
+	s3AccessKey := os.Getenv("AWS_ACCESS_KEY")
 	if s3AccessKey != "" {
 		conf.S3AccessKey = s3AccessKey
+		log.Println("Using AWS_ACCESS_KEY from environment var")
 	}
 
-	s3SecretKey := os.Getenv("S3SecretKey")
+	s3SecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	if s3SecretKey != "" {
 		conf.S3AccessKey = s3SecretKey
+		log.Println("Using AWS_SECRET_ACCESS_KEY from environment var")
 	}
 
-	secret := os.Getenv("SECRET")
+	secret := os.Getenv("PCDN_SECRET")
 	if secret != "" {
 		conf.Secret = secret
+		log.Println("Using PCDN_SECRET from environment var")
 	}
 
 	if conf.SigRequired && conf.Secret == "" {

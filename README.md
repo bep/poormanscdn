@@ -22,27 +22,27 @@ make
 
 This builds the `poormanscdn` standalone executable. It expects to find `config.json` in the current working directory.
 
-## running
+## Run as a service
 
-To keep it up and running across system reboots using [immortal](https://immortal.run)
+To run poormanscdn as a service (persist across reboots), you can use the
+[immortal](https://immortal.run) supervisor. Here is an example immortal
+`run.yml` file
 
 ```yaml
 cmd: /path/to/home/poormanscdn
 cwd: /path/to/home
 env:
-  S3AccessKey: s3-access-key
-  S3SecretKey: s3-secret-key
-  SECRET: secret
+  AWS_ACCESS_KEY: aws-access-key
+  AWS_SECRET_ACCESS_KEY: aws-secret-key
+  PCDN_SECRET: pcdn_secret
 log:
-  file: /var/log/app-1.log
+  file: /var/log/poormanscdn.log
   age: 86400 # seconds
   num: 7     # int
   size: 1    # MegaBytes
 ```
 
-To daemonize and test:
-
-    immortal ./poormanscdn
+    immortal -l /var/log/poormanscdn.log ./poormanscdn
 
 
 ## Configuration
