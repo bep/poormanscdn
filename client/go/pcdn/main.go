@@ -31,11 +31,12 @@ import (
 	"github.com/alexandres/poormanscdn/client"
 )
 
-var path, cdnUrl, domain, host, secret string
+var path, cdnUrl, method, domain, host, secret string
 var modified, expires int64
 
 func init() {
 	flag.StringVar(&cdnUrl, "cdnurl", "", "cdnurl")
+	flag.StringVar(&method, "method", "GET", "method")
 	flag.StringVar(&domain, "domain", "", "domain")
 	flag.StringVar(&host, "host", "", "host")
 	flag.Int64Var(&modified, "modified", 0, "modified")
@@ -46,8 +47,8 @@ func init() {
 
 func main() {
 	flag.Parse()
-	if cdnUrl == "" || path == "" || secret == "" {
-		log.Fatal("cdnurl, path, and secret are mandatory")
+	if cdnUrl == "" || secret == "" {
+		log.Fatal("cdnurl and secret are mandatory")
 	}
 	var lastModifiedAt *time.Time
 	if modified > 0 {
@@ -59,7 +60,7 @@ func main() {
 		expiresAtTime := time.Unix(expires, 0)
 		expiresAt = &expiresAtTime
 	}
-	url, err := client.GetSignedUrl(secret, cdnUrl, path, host, domain, lastModifiedAt, expiresAt)
+	url, err := client.GetSignedUrl(secret, cdnUrl, method, path, host, domain, lastModifiedAt, expiresAt)
 	if err != nil {
 		log.Fatal(err)
 	}

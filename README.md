@@ -8,7 +8,7 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 - Caching: Least-Recently-Used files are evicted when the cache is full
 - URL signing: protect your downloads through URL signing and link expiration
 - Streaming: if a file is not in the cache, the file is streamed from S3 to the client while being cached so that large files can be download immediately
-- Realtime stats: call http://poormanscdnhost/cacheStats to get realtime stats on transfer and cache size
+- Realtime stats: call http://poormanscdnhost/cacheStats with signed request to get realtime stats on transfer and cache size
 - Referer control: only allow signed downloads for users coming from your site
 - Host control: only allow signed downloads from a specific IP address
 
@@ -58,8 +58,11 @@ All configuration is done by editing the `config.json` file. Options:
 - CacheSize: the maximum size in bytes of the cache - example: 40000000000 to use at most 40GB
 - DatabaseDir: where to store database files, should persist between executions to maintain last-downloaded times for cached files
 - FreeSpaceBatchSizeInBytes: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
-- Secret: the secret key used to sign download URLs - example: use `$ hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom` to generate 128 bit key.
+- Secret: the secret key used to sign download URLs and purge requests - example: use `$ hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom` to generate 128 bit key.
 - SigRequired: if true, only allows downloads using signed URLs
+
+If ENV variables `AWS_ACCESS_KEY`, `AWS_SECRET_ACCESS_KEY`, or `PCDN_SECRET` are present, 
+they will override `config.json` values.
 
 ## Usage
 
@@ -71,15 +74,22 @@ poormanscdn must have write access to CacheDir, DatabaseDir, and TmpDir, which m
 
 ### Cache Invalidation
 
-poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This should be used if your files are immutable.
+You can invalidate cached files in 2 ways:
 
-Note: an attacker can invalidate your files by calling download URLs with **modified=timesinceepoch**. To avoid this, please use URL signing as described below.
+1. Send a signed DELETE request to `http://poormanscdnhost/somepath.ext` to purge 
+`somepath.ext` from the cache. Alternatively, send the request `http://poormanscdnhost` (note there's path)
+to invalidate the entire cache.
 
-### URL Signing (recommended)
+   **Pro tip:** you can get [Netlify](http://netlify.com)-like functionality by creating a git commit hook that
+   calls the signed `DELETE /` URL after your files have been pushed to S3. See URL Signing below.
+
+2. poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This only works with signed URLs.
+
+### URL Signing
 
 If SigRequired is set to true in your configuration, poormanscdn will only allow downloads with signed URLs. See `client/sign.go` (Go) and `client/python/poormanscdn/__init__.py` (Python) for sample implementations. There is a Go tool in `client/go/pcdn` that allows you to sign URLs from the command line.
 
-Example of URL signing using Python:
+**Dowload URL signing using Python**
 
 ```python
 import poormanscdn
@@ -89,13 +99,32 @@ last_modified_at = datetime.datetime.now() - datetime.timedelta(days=7) # file c
 expires_at =  datetime.datetime.now() + datetime.timedelta(hours=1) # signed URL expires in 1 hour
 domain = "mysite.com" # only allow download if Referer header is from mysite.com, set to "" to allow from any Referer
 host = "192.168.1.100" # only allow download from this IP address, set to "" to allow from any IP
-poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "/some/file.ext", last_modified_at, expires_at, restrict_domain=domain, restrict_host=host)
+poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "GET", "/some/file.ext", last_modified_at, expires_at, restrict_domain=domain, restrict_host=host)
 ```
 
-Output:
+**DELETE URL signing using Python**
 
+```python
+import poormanscdn
+
+last_modified_at = None
+expires_at = None # never expire
+poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "DELETE", "/", last_modified_at, expires_at)
 ```
-http://mycdnhost.com/some/file.ext?host=192.168.1.100&domain=mysite.com&modified=1501782152&expires=1502390552&sig=ecde6a75971086e4f01fdd14616c62f787ef2b40
+
+As this URL never expires, you can add this to your commit hook to clear the cache after your files
+have been deployed to S3.
+
+**Viewing Cache Stats**
+
+Construct a signed url as follows: 
+
+```python
+import poormanscdn
+
+last_modified_at = None
+expires_at = None # never expire
+poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "GET", "/cacheStats", last_modified_at, expires_at)
 ```
 
 ## TODO
@@ -104,13 +133,13 @@ I would love to receive pull requests for the following features:
 
 - [ ] Script for building binary releases
 - [ ] Add TLS support using Let's Encrypt
+- [x] Cache Invalidation through Purging
 - [ ] Add support for more backends in addition to S3
 - [ ] PIP-ify Python signing lib
 - [ ] JavaScript signing lib
 - [ ] PHP signing lib
 - [ ] Ruby signing lib
-- [ ] Cache invalidation using HEAD requests to origin
-- [ ] Configuration via ENV
+- [x] Secrets Configuration via ENV
 
 # License
 

@@ -234,27 +234,53 @@ func (c *Cache) freeSpace() {
 		if bytesLeftToRemove <= 0 {
 			break
 		}
-		fullPath := c.buildCachePath(path)
-		stat, err := os.Stat(fullPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				DeleteFile(c.db, path)
-				log.Println(path + "no longer exists, deleting from db")
-			} else {
-				log.Println(err)
-			}
-			continue
-		}
-		size := uint64(stat.Size())
-		err = os.Remove(fullPath)
+		freedBytes, err := c.Delete(path)
 		if err != nil {
 			log.Println("failed to delete " + path)
+			log.Println(err)
 			continue
 		}
-		DeleteFile(c.db, path)
-		c.bytesInUse -= size
-		bytesLeftToRemove -= size
+		c.bytesInUse -= freedBytes
+		bytesLeftToRemove -= freedBytes
 	}
+}
+
+func (c *Cache) DeleteAll() (freedBytes uint64, err error) {
+	paths, err := ListPathsByModificationTime(c.db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, path := range paths {
+		freedBytesForPath, err := c.Delete(path)
+		if err != nil {
+			log.Println("failed to delete " + path)
+			log.Println(err)
+			continue
+		}
+		freedBytes += freedBytesForPath
+	}
+	return
+}
+
+func (c *Cache) Delete(path string) (freedBytes uint64, err error) {
+	fullPath := c.buildCachePath(path)
+	stat, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Println(path + "no longer exists, deleting from db")
+			DeleteFile(c.db, path)
+			return 0, nil
+		}
+		return
+	}
+	size := uint64(stat.Size())
+	err = os.Remove(fullPath)
+	if err != nil {
+		return
+	}
+	freedBytes = size
+	DeleteFile(c.db, path)
+	return
 }
 
 func (c *Cache) getTmpFile() (file *os.File, err error) {

@@ -74,8 +74,8 @@ func GetConfiguration(configPath string) (conf Configuration, err error) {
 		log.Println("Using PCDN_SECRET from environment var")
 	}
 
-	if conf.SigRequired && conf.Secret == "" {
-		err = errors.New("sig is required but no secret provided")
+	if conf.Secret == "" {
+		err = errors.New("secret is required")
 		return
 	}
 	return

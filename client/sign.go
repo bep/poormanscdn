@@ -41,7 +41,11 @@ func TrimPath(path string) string {
 	return strings.Trim(path, " /")
 }
 
-func VerifySig(sig, secret, path, modified, expires, host, domain, userHost, referer string) (err error) {
+func VerifySig(sig, secret, method, path, modified, expires, host, domain, userHost, referer string) (err error) {
+	if method == "" {
+		err = errors.New("missing method")
+		return
+	}
 	if modified == "" {
 		err = errors.New("missing modified")
 		return
@@ -81,7 +85,7 @@ func VerifySig(sig, secret, path, modified, expires, host, domain, userHost, ref
 			return err
 		}
 	}
-	correctSig := Sign(secret, path, modified, expires, host, domain)
+	correctSig := Sign(secret, method, path, modified, expires, host, domain)
 	if correctSig != sig {
 		err = errors.New("auth failed")
 		return err
@@ -89,12 +93,12 @@ func VerifySig(sig, secret, path, modified, expires, host, domain, userHost, ref
 	return
 }
 
-func Sign(secret, path, modified, expires, host, domain string) string {
-	toSign := strings.Join([]string{path, modified, expires, host, domain}, "&")
+func Sign(secret, method, path, modified, expires, host, domain string) string {
+	toSign := strings.Join([]string{method, path, modified, expires, host, domain}, "&")
 	return hashString(secret + hashString(toSign))
 }
 
-func GetSignedUrl(secret string, baseUrl string, path string, host string,
+func GetSignedUrl(secret string, baseUrl string, method string, path string, host string,
 	domain string, modified *time.Time, expires *time.Time) (signedUrl string, err error) {
 	path = TrimPath(path)
 	parsedBaseUrl, err := url.Parse(baseUrl)
@@ -114,7 +118,7 @@ func GetSignedUrl(secret string, baseUrl string, path string, host string,
 		expiresStr = strconv.FormatInt(expires.Unix(), 10)
 	}
 	q.Set("expires", expiresStr)
-	q.Set("sig", Sign(secret, path, modifiedStr, expiresStr, host, domain))
+	q.Set("sig", Sign(secret, method, path, modifiedStr, expiresStr, host, domain))
 	newUrl := url.URL{
 		Scheme:   parsedBaseUrl.Scheme,
 		User:     parsedBaseUrl.User,

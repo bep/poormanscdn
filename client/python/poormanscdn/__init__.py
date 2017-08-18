@@ -27,9 +27,10 @@ else:
     from urllib import urlencode
 
 
-def get_signed_url(secret, base_url, path, last_modified_at, expires_at, restrict_domain="", restrict_host=""):
+def get_signed_url(secret, base_url, method, path, last_modified_at, expires_at, restrict_domain="", restrict_host=""):
     parsed_base_url = urlparse(base_url) 
-    path = _trim_path(parsed_base_url.path) + "/" + _trim_path(path)
+    # double trim in case base_url.path is empty
+    path = _trim_path(_trim_path(parsed_base_url.path) + "/" + _trim_path(path))
     q = parse_qs(parsed_base_url.query)
     q["host"] = restrict_host
     q["domain"] = restrict_domain
@@ -41,7 +42,7 @@ def get_signed_url(secret, base_url, path, last_modified_at, expires_at, restric
     if expires_at:
         expires_str = expires_at.strftime("%s")
     q["expires"] = expires_str
-    q["sig"] = _sign(secret, path, modified_str, expires_str, restrict_host, restrict_domain)
+    q["sig"] = _sign(secret, method, path, modified_str, expires_str, restrict_host, restrict_domain)
     new_url = parsed_base_url._replace(path=path, query=urlencode(q))
     return new_url.geturl()
 
@@ -53,6 +54,6 @@ def _hash_string(s):
     h.update(s.encode())
     return h.hexdigest()
 
-def _sign(secret, path, modified, expires, host, domain):
-    to_sign = "&".join([path, modified, expires, host, domain])
+def _sign(secret, method, path, modified, expires, host, domain):
+    to_sign = "&".join([method, path, modified, expires, host, domain])
     return _hash_string(secret + _hash_string(to_sign))
