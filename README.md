@@ -55,8 +55,7 @@ poormanscdn must have write access to CacheDir, DatabaseDir, and TmpDir, which m
 You can invalidate cached files in 2 ways:
 
 1. Send a signed DELETE request to `http://poormanscdnhost/somepath.ext` to purge 
-`somepath.ext` from the cache. Alternatively, send the request `http://poormanscdnhost` (note there's path)
-to invalidate the entire cache.
+`somepath.ext` from the cache. Alternatively, send the request `http://poormanscdnhost/` (base path) to invalidate the entire cache.
 
    **Pro tip:** you can get [Netlify](http://netlify.com)-like functionality by creating a git commit hook that
    calls the signed `DELETE /` URL after your files have been pushed to S3. See URL Signing below.
