@@ -9,5 +9,5 @@
 	"DatabaseDir": "db",
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
-	"SigRequired":	true
+	"SigRequired":	false
 }
