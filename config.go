@@ -64,7 +64,7 @@ func GetConfiguration(configPath string) (conf Configuration, err error) {
 
 	s3SecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 	if s3SecretKey != "" {
-		conf.S3AccessKey = s3SecretKey
+		conf.S3SecretKey = s3SecretKey
 		log.Println("Using AWS_SECRET_ACCESS_KEY from environment var")
 	}
 
