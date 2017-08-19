@@ -23,6 +23,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"log"
@@ -30,6 +31,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func httpError(w http.ResponseWriter, err error, code int) {
@@ -38,7 +41,7 @@ func httpError(w http.ResponseWriter, err error, code int) {
 }
 
 func main() {
-	config, err := GetConfiguration("config.json")
+	config, err := getConfiguration("config.json")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,11 +50,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	storageClient := GetS3Client(config)
+	storageClients := GetS3Clients(config)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cache, err := GetCache(config, db, storageClient)
+	cache, err := GetCache(config, db, storageClients)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -59,22 +62,48 @@ func main() {
 	go cache.FreeSpaceWatchdog()
 	cache.bytesUsedChan <- 0 // just to free space if needed on startup
 
-	http.HandleFunc("/robots.txt", makeHandler(
+	h := http.NewServeMux()
+
+	h.HandleFunc("/robots.txt", makeHandler(
 		config,
 		cache,
 		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
 			fmt.Fprint(w, "User-agent: *\nDisallow: /")
 			return http.StatusOK, nil
 		}))
-	http.HandleFunc("/favicon.ico", makeHandler(
+	h.HandleFunc("/favicon.ico", makeHandler(
 		config,
 		cache,
 		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
 			return http.StatusNotFound, errors.New("not found")
 		}))
 
-	http.HandleFunc("/", makeHandler(config, cache, CacheHandler))
-	log.Fatal(http.ListenAndServe(config.Listen, nil))
+	h.HandleFunc("/", makeHandler(config, cache, CacheHandler))
+
+	needsTLS, err := config.isTLSConfigured()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if needsTLS {
+		m := autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(config.hostNames()...),
+			Cache:      autocert.DirCache(config.TLSCertificateDir),
+		}
+		s := &http.Server{
+			Addr:      config.Listen,
+			TLSConfig: &tls.Config{GetCertificate: m.GetCertificate},
+			Handler:   h,
+		}
+		log.Fatal(s.ListenAndServeTLS("", ""))
+	} else {
+		s := &http.Server{
+			Addr:    config.Listen,
+			Handler: h,
+		}
+		log.Fatal(s.ListenAndServe())
+	}
 }
 
 func makeHandler(config Configuration, cache *Cache, handler func(Configuration, *Cache, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {

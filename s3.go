@@ -25,22 +25,29 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/kr/s3"
 	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
+
+	"github.com/kr/s3"
 )
 
 type S3Client struct {
 	bucket    string
+	path      string
 	accessKey string
 	secretKey string
 }
 
-func (c S3Client) buildS3Url(path string) string {
+func (c S3Client) buildS3Url(p string) string {
 	url, _ := url.Parse("http://" + c.bucket + ".s3.amazonaws.com/")
-	url.Path = path
+	if c.path != "" {
+		p = path.Join(c.path, p)
+	}
+	url.Path = p
+
 	return url.String()
 }
 
@@ -73,10 +80,22 @@ func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
 	return nil
 }
 
-func GetS3Client(config Configuration) S3Client {
-	return S3Client{
-		bucket:    config.S3Bucket,
-		accessKey: config.S3AccessKey,
-		secretKey: config.S3SecretKey,
+func (c S3Client) PrefixPath(p string) string {
+	return path.Join(c.bucket, c.path, p)
+}
+
+func GetS3Clients(config Configuration) map[string]StorageProvider {
+	clients := make(map[string]StorageProvider)
+
+	for name, hostConfig := range config.Hosts {
+		clients[name] = S3Client{
+			bucket:    hostConfig.Bucket,
+			path:      hostConfig.Path,
+			accessKey: hostConfig.AccessKey,
+			secretKey: hostConfig.SecretKey,
+		}
 	}
+
+	return clients
+
 }

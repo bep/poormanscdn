@@ -1,8 +1,8 @@
 {
-	"Listen": 		":8080",
-	"S3Bucket":     "yours3bucketname",
-	"S3AccessKey":  "yours3accesskey",
-	"S3SecretKey":  "yours3secret",
+	"Listen": 		":https",
+	"DefaultAccessKey":  "yours3accesskey",
+	"DefaultSecretKey":  "yours3secret",
+	"TLSCertificateDir": "cert",
 	"TmpDir":       "tmp", 
 	"CacheDir":     "cache",
 	"CacheSize":    40000000000,
@@ -10,4 +10,8 @@
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
 	"SigRequired":	false
+	"Hosts": {
+		"example.org": { "Bucket": "yourS3bucketname", "Path": "site1", "AccessKey": "", "SecretKey": "" },
+		"example.com": { "Bucket": "yourS3bucketname", "Path": "site2", "AccessKey": "", "SecretKey": "" }
+	}
 }
