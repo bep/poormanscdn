@@ -25,58 +25,126 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"os"
+	"sort"
+)
+
+const (
+	awsAccessKeyEnv       = "AWS_ACCESS_KEY"
+	awsSecretAccessKeyEnv = "AWS_SECRET_ACCESS_KEY"
+	pcdnSecretEnv         = "PCDN_SECRET"
 )
 
 type Configuration struct {
 	Listen                    string
-	S3Bucket                  string
-	S3AccessKey               string
-	S3SecretKey               string
+	Hosts                     map[string]Host
+	DefaultAccessKey          string
+	DefaultSecretKey          string
 	TmpDir                    string
 	CacheDir                  string
 	CacheSize                 uint64
 	DatabaseDir               string
+	TLSCertificateDir         string
 	FreeSpaceBatchSizeInBytes uint64
 	Secret                    string
 	SigRequired               bool
 }
 
-func GetConfiguration(configPath string) (conf Configuration, err error) {
-	file, err := os.Open(configPath)
-	if err != nil {
-		return
+func (c Configuration) hostNames() []string {
+	var names []string
+	for k, _ := range c.Hosts {
+		names = append(names, k)
 	}
-	decoder := json.NewDecoder(file)
+
+	sort.Strings(names)
+
+	return names
+}
+
+func (c Configuration) isTLSConfigured() (bool, error) {
+	if c.TLSCertificateDir == "" {
+		return false, nil
+	}
+
+	fi, err := os.Stat(c.TLSCertificateDir)
+	if err != nil || !fi.IsDir() {
+		return false, fmt.Errorf("dir %d not valid as certificate dir", c.TLSCertificateDir)
+	}
+
+	return true, nil
+
+}
+
+type Host struct {
+	Bucket string
+	Path   string
+
+	// Note that if not set, these will get their values from the default or from env.
+	AccessKey string
+	SecretKey string
+}
+
+func readConfiguration(r io.Reader) (conf Configuration, err error) {
+
+	decoder := json.NewDecoder(r)
 	conf = Configuration{}
 	err = decoder.Decode(&conf)
 	if err != nil {
 		return
 	}
 
-	// check for AWS keys in environment
-	s3AccessKey := os.Getenv("AWS_ACCESS_KEY")
-	if s3AccessKey != "" {
-		conf.S3AccessKey = s3AccessKey
-		log.Println("Using AWS_ACCESS_KEY from environment var")
+	if conf.DefaultAccessKey == "" {
+		// check for AWS keys in environment
+		s3AccessKey := os.Getenv(awsAccessKeyEnv)
+		if s3AccessKey != "" {
+			conf.DefaultAccessKey = s3AccessKey
+			log.Printf("Using %s from environment var\n", awsAccessKeyEnv)
+		}
 	}
 
-	s3SecretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
-	if s3SecretKey != "" {
-		conf.S3SecretKey = s3SecretKey
-		log.Println("Using AWS_SECRET_ACCESS_KEY from environment var")
+	if conf.DefaultSecretKey == "" {
+		s3SecretKey := os.Getenv(awsSecretAccessKeyEnv)
+		if s3SecretKey != "" {
+			conf.DefaultSecretKey = s3SecretKey
+			log.Printf("Using %s from environment var\n", awsSecretAccessKeyEnv)
+		}
 	}
 
-	secret := os.Getenv("PCDN_SECRET")
-	if secret != "" {
-		conf.Secret = secret
-		log.Println("Using PCDN_SECRET from environment var")
+	if conf.Secret == "" {
+		secret := os.Getenv(pcdnSecretEnv)
+		if secret != "" {
+			conf.Secret = secret
+			log.Printf("Using %s from environment var\n", pcdnSecretEnv)
+		}
 	}
 
 	if conf.Secret == "" {
 		err = errors.New("secret is required")
 		return
 	}
+
+	for name, host := range conf.Hosts {
+		if host.AccessKey == "" {
+			host.AccessKey = conf.DefaultAccessKey
+		}
+		if host.SecretKey == "" {
+			host.SecretKey = conf.DefaultSecretKey
+		}
+		conf.Hosts[name] = host
+	}
 	return
+}
+
+func getConfiguration(configPath string) (conf Configuration, err error) {
+	file, err := os.Open(configPath)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	return readConfiguration(file)
+
 }

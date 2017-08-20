@@ -44,6 +44,7 @@ import (
 
 type StorageProvider interface {
 	Read(path string, w *CacheWriter) *StorageProviderError
+	PrefixPath(p string) string
 	//Stat(path string) (Stat, error)
 }
 
@@ -66,7 +67,7 @@ type Stat struct {
 
 type Cache struct {
 	db                        *leveldb.DB
-	storageProvider           StorageProvider
+	storageProviders          map[string]StorageProvider
 	cacheDir                  string
 	cacheSize                 uint64
 	tmpDir                    string
@@ -107,6 +108,10 @@ type CacheClient struct {
 	req *http.Request
 }
 
+func (c CacheClient) host() string {
+	return c.req.Host
+}
+
 func (c *CacheWriter) WriteSize(sizeInBytes int64) {
 	c.client.Header().Set("Content-Length", strconv.FormatInt(sizeInBytes, 10))
 	c.bytesWritten = sizeInBytes
@@ -120,10 +125,16 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusBadRequest, err}
 		}
 	}
+
 	path = client.TrimPath(path)
 	if len(path) == 0 {
 		err := errors.New("Empty path")
 		return &CacheError{http.StatusBadRequest, err}
+	}
+
+	storage, found := c.storageProviders[cacheClient.host()]
+	if !found {
+		return &CacheError{http.StatusBadRequest, errors.New("storage provider not found for host")}
 	}
 
 	if path == "cacheStats" {
@@ -134,7 +145,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return nil
 	}
 
-	fullPath := c.buildCachePath(path)
+	fullPath := c.buildCachePath(storage.PrefixPath(path))
 
 	stat, err := os.Stat(fullPath)
 	if err == nil && !stat.ModTime().Before(lastModifiedAt) {
@@ -174,7 +185,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 	cacheClient.Header().Set("Content-Type", mime.TypeByExtension(pathLib.Ext(fullPath)))
 	cacheClient.Header().Set("Accept-Ranges", "none")
 
-	storageProviderError := c.storageProvider.Read(path, &cacheWriter)
+	storageProviderError := storage.Read(path, &cacheWriter)
 	if storageProviderError != nil {
 		return &CacheError{storageProviderError.status, storageProviderError}
 	}
@@ -245,12 +256,15 @@ func (c *Cache) freeSpace() {
 	}
 }
 
-func (c *Cache) DeleteAll() (freedBytes uint64, err error) {
+func (c *Cache) DeleteWithPrefix(prefix string) (freedBytes uint64, err error) {
 	paths, err := ListPathsByModificationTime(c.db)
 	if err != nil {
 		log.Fatal(err)
 	}
 	for _, path := range paths {
+		if !strings.HasPrefix(path, prefix) {
+			continue
+		}
 		freedBytesForPath, err := c.Delete(path)
 		if err != nil {
 			log.Println("failed to delete " + path)
@@ -288,7 +302,7 @@ func (c *Cache) getTmpFile() (file *os.File, err error) {
 	return
 }
 
-func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvider) (cache *Cache, err error) {
+func GetCache(config Configuration, db *leveldb.DB, storageProviders map[string]StorageProvider) (cache *Cache, err error) {
 	stat, err := os.Stat(config.CacheDir)
 	if err != nil {
 		return
@@ -333,7 +347,7 @@ func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvi
 
 	cache = &Cache{
 		db:                        db,
-		storageProvider:           storageProvider,
+		storageProviders:          storageProviders,
 		cacheDir:                  config.CacheDir,
 		cacheSize:                 config.CacheSize,
 		tmpDir:                    config.TmpDir,

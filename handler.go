@@ -25,6 +25,7 @@ package main
 import (
 	"errors"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -33,7 +34,7 @@ import (
 )
 
 func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (status int, err error) {
-	path := client.TrimPath(r.URL.Path)
+	urlPath := client.TrimPath(r.URL.Path)
 	q := r.URL.Query()
 
 	lastModifiedAtInt := int64(0) // no cached file will have timestamp <= 0
@@ -53,9 +54,9 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	//     - modified threatens to purge cache or
 	//     - SigRequired is true
 	//     - DELETE request
-	if lastModifiedAtInt > 0 || config.SigRequired || r.Method == http.MethodDelete || path == "cacheStats" {
+	if lastModifiedAtInt > 0 || config.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
 		host := strings.Split(r.RemoteAddr, ":")[0]
-		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, path, lastModifiedAt, q.Get("expires"), q.Get("host"),
+		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, urlPath, lastModifiedAt, q.Get("expires"), q.Get("host"),
 			q.Get("domain"), host, r.Referer())
 		if err != nil {
 			return http.StatusForbidden, errors.New("bad sig")
@@ -63,10 +64,18 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	}
 
 	if r.Method == http.MethodDelete {
-		if path == "" {
-			_, err = cache.DeleteAll()
+		hostConfig, found := config.Hosts[r.Host]
+		if !found {
+			return http.StatusBadRequest, errors.New("config not found for host")
+		}
+
+		if urlPath == "" {
+			_, err = cache.DeleteWithPrefix(hostConfig.Path)
 		} else {
-			_, err = cache.Delete(path)
+			if hostConfig.Path != "" {
+				urlPath = path.Join(hostConfig.Path, urlPath)
+			}
+			_, err = cache.Delete(urlPath)
 		}
 		if err != nil {
 			return http.StatusInternalServerError, errors.New("failed to delete")
@@ -74,9 +83,9 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	} else {
 		cacheClient := CacheClient{w, r}
 		if r.URL.Path[len(r.URL.Path)-1] == '/' {
-			path += "/index.html" // support static websites
+			urlPath += "/index.html" // support static websites
 		}
-		cacheError := cache.Read(path, lastModifiedAtTime, cacheClient)
+		cacheError := cache.Read(urlPath, lastModifiedAtTime, cacheClient)
 		if cacheError != nil {
 			return cacheError.status, cacheError
 		}
