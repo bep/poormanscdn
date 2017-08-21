@@ -68,7 +68,11 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	}
 
 	if r.Method == http.MethodDelete {
-		hostConfig, found := config.Hosts[r.Host]
+		host, _, err := net.SplitHostPort(r.Host)
+		if err != nil {
+			host = r.Host // r.Host not host:port, likely only host
+		}
+		hostConfig, found := config.Hosts[host]
 		if !found {
 			return http.StatusBadRequest, errors.New("config not found for host")
 		}

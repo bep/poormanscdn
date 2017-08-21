@@ -30,6 +30,7 @@ import (
 	"io/ioutil"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	pathLib "path"
@@ -109,7 +110,11 @@ type CacheClient struct {
 }
 
 func (c CacheClient) host() string {
-	return c.req.Host
+	host, _, err := net.SplitHostPort(c.req.Host)
+	if err != nil {
+		host = c.req.Host // c.req.Host not host:port, likely only host
+	}
+	return host
 }
 
 func (c *CacheWriter) WriteSize(sizeInBytes int64) {
@@ -134,7 +139,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 
 	storage, found := c.storageProviders[cacheClient.host()]
 	if !found {
-		return &CacheError{http.StatusBadRequest, errors.New("storage provider not found for host")}
+		return &CacheError{http.StatusBadRequest, errors.New(fmt.Sprintf("storage provider not found for host %s", cacheClient.host()))}
 	}
 
 	if path == "cacheStats" {
