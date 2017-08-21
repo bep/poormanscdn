@@ -71,7 +71,7 @@ func (c Configuration) isTLSConfigured() (bool, error) {
 
 	fi, err := os.Stat(c.TLSCertificateDir)
 	if err != nil || !fi.IsDir() {
-		return false, fmt.Errorf("dir %d not valid as certificate dir", c.TLSCertificateDir)
+		return false, fmt.Errorf("dir %s not valid as certificate dir", c.TLSCertificateDir)
 	}
 
 	return true, nil
