@@ -68,13 +68,18 @@ You can invalidate cached files in 2 ways:
 
 ### Virtual Hosts
 
-A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have three domains `myblog.com`, `familyblog.com`, and `carrentals.com`, with the first two sharing S3 bucket `blogs` and the third in a separate bucket `carrentals`, all in the same S3 account, your `Hosts` configuration would be:
+A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have three domains `myblog.com`, `familyblog.com`, and `carrentals.com`, with:
+
+- `myblog.com` and `familyblog.com` using `DefaultAccessKey` and `DefaultSecretKey` and sharing S3 bucket `blogs` under different paths
+- `carrentals.com` in a separate AWS account and bucket using the root path
+
+Your `Hosts` configuration would be:
 
 ```
 "Hosts": { 
-	"myblog.com": { "Bucket": "blogs", "Path": "my", "AccessKey": "", "SecretKey": "" },
-	"familyblog.com": { "Bucket": "blogs", "Path": "family", "AccessKey": "", "SecretKey": "" },
-	"carrentals.com": { "Bucket": "carrentals", "Path": "", "AccessKey": "", "SecretKey": "" }
+	"myblog.com": { "Bucket": "blogs", "Path": "my" },
+	"familyblog.com": { "Bucket": "blogs", "Path": "family" },
+	"carrentals.com": { "Bucket": "carrentals", "AccessKey": "someotherawsaccesskey", "SecretKey": "someotherawssecretkey" }
 }
 ```
 
