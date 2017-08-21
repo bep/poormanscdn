@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
@@ -89,9 +90,9 @@ type CacheStats struct {
 
 func (c *Cache) getStats() string {
 	cacheStats := CacheStats{
-		c.bytesInUse,
-		c.bytesOut,
-		c.bytesIn,
+		atomic.LoadUint64(&c.bytesInUse),
+		atomic.LoadUint64(&c.bytesOut),
+		atomic.LoadUint64(&c.bytesIn),
 		time.Now().Unix() - c.startedAt.Unix(),
 	}
 	stats, _ := json.Marshal(cacheStats)
@@ -163,7 +164,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
-		c.bytesOut += uint64(stat.Size())
+		atomic.AddUint64(&c.bytesOut, uint64(stat.Size()))
 		http.ServeContent(cacheClient, cacheClient.req, fullPath, stat.ModTime(), file)
 		return nil
 	}
@@ -221,8 +222,8 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusInternalServerError, err}
 	}
 	sizeInBytes := cacheWriter.bytesWritten
-	c.bytesOut += uint64(sizeInBytes)
-	c.bytesIn += uint64(sizeInBytes)
+	atomic.AddUint64(&c.bytesOut, uint64(sizeInBytes))
+	atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
 	c.bytesUsedChan <- sizeInBytes
 	return nil
 }
@@ -233,8 +234,8 @@ func (c *Cache) buildCachePath(path string) string {
 
 func (c *Cache) FreeSpaceWatchdog() {
 	for size := range c.bytesUsedChan {
-		c.bytesInUse += uint64(size)
-		if c.bytesInUse > c.cacheSize {
+		atomic.AddUint64(&c.bytesInUse, uint64(size))
+		if atomic.LoadUint64(&c.bytesInUse) > c.cacheSize {
 			c.freeSpace()
 		}
 	}
@@ -245,7 +246,7 @@ func (c *Cache) freeSpace() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	bytesLeftToRemove := (c.bytesInUse - c.cacheSize) + c.freeSpaceBatchSizeInBytes
+	bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 	for _, path := range paths {
 		if bytesLeftToRemove <= 0 {
 			break
@@ -256,7 +257,6 @@ func (c *Cache) freeSpace() {
 			log.Println(err)
 			continue
 		}
-		c.bytesInUse -= freedBytes
 		bytesLeftToRemove -= freedBytes
 	}
 }
@@ -299,6 +299,7 @@ func (c *Cache) Delete(path string) (freedBytes uint64, err error) {
 	}
 	freedBytes = size
 	DeleteFile(c.db, path)
+	atomic.AddUint64(&c.bytesInUse, -freedBytes)
 	return
 }
 
