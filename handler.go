@@ -24,10 +24,10 @@ package main
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"path"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
@@ -55,7 +55,11 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	//     - SigRequired is true
 	//     - DELETE request
 	if lastModifiedAtInt > 0 || config.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
-		host := strings.Split(r.RemoteAddr, ":")[0]
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil {
+			return http.StatusInternalServerError, errors.New("bad remoteaddr")
+		}
+
 		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, urlPath, lastModifiedAt, q.Get("expires"), q.Get("host"),
 			q.Get("domain"), host, r.Referer())
 		if err != nil {
