@@ -247,18 +247,17 @@ func (c *Cache) freeSpace() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 	for _, path := range paths {
+		bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 		if bytesLeftToRemove <= 0 {
 			break
 		}
-		freedBytes, err := c.Delete(path)
+		_, err := c.Delete(path)
 		if err != nil {
 			log.Println("failed to delete " + path)
 			log.Println(err)
 			continue
 		}
-		bytesLeftToRemove -= freedBytes
 	}
 }
 
