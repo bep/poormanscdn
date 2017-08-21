@@ -111,10 +111,9 @@ func makeHandler(config Configuration, cache *Cache, handler func(Configuration,
 		status, err := handler(config, cache, w, r)
 		if status != http.StatusOK {
 			if w.Header().Get("Content-Length") == "" { // response not yet sent, ok to write to repsonse
-				WriteResponseError(os.Stderr, w, r, status, err)
-			} else if status == http.StatusInternalServerError {
-				WriteError(os.Stderr, r, time.Now(), status, err) // don't write to response
+				http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)
 			}
+			WriteError(os.Stderr, r, time.Now(), status, err) // log all errors to stderr
 		}
 		WriteCombinedLog(os.Stdout, r, *r.URL, time.Now(), status, getContentLength(w))
 	}
