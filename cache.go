@@ -46,7 +46,6 @@ import (
 
 type StorageProvider interface {
 	Read(path string, w *CacheWriter) *StorageProviderError
-	PrefixPath(p string) string
 	//Stat(path string) (Stat, error)
 }
 
@@ -138,9 +137,10 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusBadRequest, err}
 	}
 
-	storage, found := c.storageProviders[cacheClient.host()]
+	host := cacheClient.host()
+	storage, found := c.storageProviders[host]
 	if !found {
-		return &CacheError{http.StatusBadRequest, errors.New(fmt.Sprintf("storage provider not found for host %s", cacheClient.host()))}
+		return &CacheError{http.StatusBadRequest, errors.New(fmt.Sprintf("storage provider not found for host %s", host))}
 	}
 
 	if path == "cacheStats" {
@@ -151,7 +151,8 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return nil
 	}
 
-	fullPath := c.buildCachePath(storage.PrefixPath(path))
+	hostPrefixedPath := pathLib.Join(host, path)
+	fullPath := c.buildCachePath(hostPrefixedPath)
 
 	stat, err := os.Stat(fullPath)
 	if err == nil && !stat.ModTime().Before(lastModifiedAt) {
@@ -160,7 +161,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		defer file.Close()
-		err = PutFile(c.db, path)
+		err = PutFile(c.db, hostPrefixedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
@@ -217,7 +218,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 	}
 	tmpRemoved = true
 
-	err = PutFile(c.db, path)
+	err = PutFile(c.db, hostPrefixedPath)
 	if err != nil {
 		return &CacheError{http.StatusInternalServerError, err}
 	}

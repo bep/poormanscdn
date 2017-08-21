@@ -72,18 +72,15 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 		if err != nil {
 			host = r.Host // r.Host not host:port, likely only host
 		}
-		hostConfig, found := config.Hosts[host]
+		_, found := config.Hosts[host]
 		if !found {
 			return http.StatusBadRequest, errors.New("config not found for host")
 		}
 
 		if urlPath == "" {
-			_, err = cache.DeleteWithPrefix(hostConfig.Path)
+			_, err = cache.DeleteWithPrefix(host)
 		} else {
-			if hostConfig.Path != "" {
-				urlPath = path.Join(hostConfig.Path, urlPath)
-			}
-			_, err = cache.Delete(urlPath)
+			_, err = cache.Delete(path.Join(host, urlPath))
 		}
 		if err != nil {
 			return http.StatusInternalServerError, errors.New("failed to delete")

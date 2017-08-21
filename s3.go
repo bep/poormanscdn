@@ -80,10 +80,6 @@ func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
 	return nil
 }
 
-func (c S3Client) PrefixPath(p string) string {
-	return path.Join(c.bucket, c.path, p)
-}
-
 func GetS3Clients(config Configuration) map[string]StorageProvider {
 	clients := make(map[string]StorageProvider)
 
