@@ -16,14 +16,17 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 
 ## Installation
 
-```bash
-go get github.com/alexandres/poormanscdn
-cd $GOPATH/src/github.com/alexandres/poormanscdn
-make
-```
+Add poormanscdn and its package dependencies to your go Go `src` directory:
 
-This builds the `poormanscdn` standalone executable. It expects to find `config.json` in the current working directory.
+    go get -v github.com/alexandres/poormanscdn
 
+Once the `get` completes, you should find your new `poormanscdn` (or `poormanscdn.exe`) executable sitting inside `$GOPATH/bin/`.
+
+To update poormanscdn's dependencies, use `go get` with the `-u` option.
+
+    go get -u -v github.com/alexandres/poormanscdn
+
+`poormanscdn` expects to find `config.json` in the current working directory. See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an example configuration.
 
 ## Configuration
 
@@ -134,29 +137,6 @@ last_modified_at = None
 expires_at = None # never expire
 poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "GET", "/cacheStats", last_modified_at, expires_at)
 ```
-
-## Run as a service
-
-To run poormanscdn as a service (persist across reboots), you can use the
-[immortal](https://immortal.run) supervisor (or any supervisor you like). Here is an example immortal
-`run.yml` file
-
-```yaml
-cmd: /path/to/home/poormanscdn
-cwd: /path/to/home
-env:
-  AWS_ACCESS_KEY: aws-access-key
-  AWS_SECRET_ACCESS_KEY: aws-secret-key
-  PCDN_SECRET: pcdn_secret
-log:
-  file: /var/log/poormanscdn.log
-  age: 86400 # seconds
-  num: 7     # int
-  size: 1    # MegaBytes
-```
-
-    immortal -l /var/log/poormanscdn.log ./poormanscdn
-
 
 ## TODO
 
