@@ -6,7 +6,9 @@ poormanscdn is a caching proxy to Amazon S3 built using Go. It is highly perform
 
 - Trivial to setup: single binary and simple config file
 - Caching: Least-Recently-Used files are evicted when the cache is full
+- Automatic HTTPS: using [Let's Encrypt](https://letsencrypt.org/)
 - URL signing: protect your downloads through URL signing and link expiration
+- Virtual Hosts: host multiple domains on the same server
 - Streaming: if a file is not in the cache, the file is streamed from S3 to the client while being cached so that large files can be download immediately
 - Realtime stats: call http://poormanscdnhost/cacheStats with signed request to get realtime stats on transfer and cache size
 - Referer control: only allow signed downloads for users coming from your site
@@ -27,20 +29,22 @@ This builds the `poormanscdn` standalone executable. It expects to find `config.
 
 All configuration is done by editing the `config.json` file. Options:
 
-- Listen: interface and port to listen on - examples: 127.0.0.1:8080 to listen on localhost on port 8080 or :80 to listen on all interfaces on port 80
-- S3Bucket: S3 bucket name
-- S3AccessKey: S3 Access Key
-- S3SecretKey: S3 Secret Key
-- TmpDir: where to store temporary files, need not persist between executions
-- CacheDir: where to store cached files, should persist between executions to avoid emptying the cache
-- CacheSize: the maximum size in bytes of the cache - example: 40000000000 to use at most 40GB
-- DatabaseDir: where to store database files, should persist between executions to maintain last-downloaded times for cached files
-- FreeSpaceBatchSizeInBytes: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
-- Secret: the secret key used to sign download URLs and purge requests - example: use `$ hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom` to generate 128 bit key.
-- SigRequired: if true, only allows downloads using signed URLs
+- `Listen`: interface and port to listen on - examples: `127.0.0.1:8080` to listen on localhost on port 8080 or `:https` to listen on all interfaces on port 443
+- `DefaultAccessKey`: S3 Access Key (alternatively leave this blank and use `AWS_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
+- `DefaultSecretKey`: S3 Secret Key (alternatively leave this blank and use `AWS_SECRET_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
+- `Secret`: the secret key used to sign download URLs and purge requests - example: use `$ hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom` to generate 128 bit key. (alternatively leave this blank and use `PCDN_SECRET` ENV variable)
+- `TmpDir`: where to store temporary files, need not persist between executions
+- `CacheDir`: where to store cached files, should persist between executions to avoid emptying the cache
+- `CacheSize`: the maximum size in bytes of the cache - example: 40000000000 to use at most 40GB
+- `DatabaseDir`: where to store database files, should persist between executions to maintain last-downloaded times for cached files
+- `TLSCertificateDir`: where to store Let's Encrypt certificates (if blank, will disable https:// on all hosts). See *Using HTTPS* below.
+- `FreeSpaceBatchSizeInBytes`: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
+- `SigRequired`: if true, only allows downloads using signed URLs
+- `Hosts`: dictionary of virtual hosts (see *Virtual Hosts* below), in the format:
+	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseDefaultAccessKey", "SecretKey": "leaveblanktouseDefaultSecretKey" }`
+   
+   Note: Usage of HTTPS requires a valid domain name.
 
-If ENV variables `AWS_ACCESS_KEY`, `AWS_SECRET_ACCESS_KEY`, or `PCDN_SECRET` are present, 
-they will override `config.json` values.
 
 ## Usage
 
@@ -61,6 +65,28 @@ You can invalidate cached files in 2 ways:
    calls the signed `DELETE /` URL after your files have been pushed to S3. See URL Signing below.
 
 2. poormanscdn invalidates a cached file if the **modified** query parameter is newer than the last modified time as given by the local filesystem. For example, passing **modified=0** means a file will never be invalidated. This only works with signed URLs.
+
+### Virtual Hosts
+
+A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have three domains `myblog.com`, `familyblog.com`, and `carrentals.com`, with the first two sharing S3 bucket `blogs` and the third in a separate bucket `carrentals`, all in the same S3 account, your `Hosts` configuration would be:
+
+```
+"Hosts": { 
+	"myblog.com": { "Bucket": "blogs", "Path": "my", "AccessKey": "", "SecretKey": "" },
+	"familyblog.com": { "Bucket": "blogs", "Path": "family", "AccessKey": "", "SecretKey": "" },
+	"carrentals.com": { "Bucket": "carrentals", "Path": "", "AccessKey": "", "SecretKey": "" }
+}
+```
+
+### Automatic HTTPS
+
+Suppose you own domain `myblog.com`. Create an `A record` pointing to the IP address of your poormanscdn server. Then in your `config.json` file:
+
+1. Create an entry `myblog.com` in the `Hosts` section, as shown above.
+2. Make sure `TLSCertificateDir` to a writable directory.
+3. Set `Listen` to `:https`.
+
+That's it! Start poormanscdn and HTTPS should just work. If you have more domains simply add them to `Hosts` and they will also be HTTPS enabled.
 
 ### URL Signing
 
@@ -132,8 +158,9 @@ log:
 I would love to receive pull requests for the following features:
 
 - [ ] Script for building binary releases
-- [ ] Add TLS support using Let's Encrypt
+- [x] Add TLS support using Let's Encrypt - implemented by [bep](https://github.com/bep)
 - [x] Cache Invalidation through Purging
+- [x] Virtual Hosts - implemented by [bep](https://github.com/bep)
 - [ ] Add support for more backends in addition to S3
 - [ ] PIP-ify Python signing lib
 - [ ] JavaScript signing lib
