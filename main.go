@@ -24,7 +24,6 @@ package main
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -63,20 +62,6 @@ func main() {
 	cache.bytesUsedChan <- 0 // just to free space if needed on startup
 
 	h := http.NewServeMux()
-
-	h.HandleFunc("/robots.txt", makeHandler(
-		config,
-		cache,
-		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
-			fmt.Fprint(w, "User-agent: *\nDisallow: /")
-			return http.StatusOK, nil
-		}))
-	h.HandleFunc("/favicon.ico", makeHandler(
-		config,
-		cache,
-		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
-			return http.StatusNotFound, errors.New("not found")
-		}))
 
 	h.HandleFunc("/", makeHandler(config, cache, CacheHandler))
 
