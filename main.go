@@ -40,6 +40,7 @@ func httpError(w http.ResponseWriter, err error, code int) {
 }
 
 func main() {
+	checkFdlimit()
 	config, err := getConfiguration("config.json")
 	if err != nil {
 		log.Fatal(err)
