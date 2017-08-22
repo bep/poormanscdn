@@ -9,7 +9,7 @@
 	"DatabaseDir": "db",
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
-	"SigRequired":	false
+	"SigRequired":	false,
 	"Hosts": {
 		"example.org": { "Bucket": "yourS3bucketname", "Path": "site1", "AccessKey": "", "SecretKey": "" },
 		"example.com": { "Bucket": "yourS3bucketname", "Path": "site2", "AccessKey": "", "SecretKey": "" }
