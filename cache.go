@@ -159,13 +159,22 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 
 	deleteTimestampBefore := atomic.LoadUint64(&c.deleteTimestamp)
 
+	var file *os.File
+	// need to lock to ensure delete doesn't remove file
+	// between Stat and Open. Once we have file handle can release lock.
+	c.cacheLock.RLock()
 	stat, err := os.Stat(fullPath)
 	if err == nil && !stat.ModTime().Before(lastModifiedAt) {
-		file, err := os.Open(fullPath)
+		file, err = os.Open(fullPath)
 		if err != nil {
+			c.cacheLock.RUnlock()
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		defer file.Close()
+	}
+	c.cacheLock.RUnlock()
+
+	if file != nil { // file is in cache
 		err = PutFile(c.db, hostPrefixedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
