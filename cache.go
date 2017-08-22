@@ -37,6 +37,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -78,6 +79,8 @@ type Cache struct {
 	bytesOut                  uint64
 	bytesIn                   uint64
 	startedAt                 time.Time
+	deleteTimestamp           uint64
+	cacheLock                 *sync.RWMutex
 }
 
 type CacheStats struct {
@@ -154,6 +157,8 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 	hostPrefixedPath := pathLib.Join(host, path)
 	fullPath := c.buildCachePath(hostPrefixedPath)
 
+	deleteTimestampBefore := atomic.LoadUint64(&c.deleteTimestamp)
+
 	stat, err := os.Stat(fullPath)
 	if err == nil && !stat.ModTime().Before(lastModifiedAt) {
 		file, err := os.Open(fullPath)
@@ -212,20 +217,28 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusInternalServerError, err}
 	}
 
-	err = os.Rename(tmpName, fullPath)
-	if err != nil {
-		return &CacheError{http.StatusInternalServerError, err}
-	}
-	tmpRemoved = true
-
-	err = PutFile(c.db, hostPrefixedPath)
-	if err != nil {
-		return &CacheError{http.StatusInternalServerError, err}
-	}
 	sizeInBytes := cacheWriter.bytesWritten
 	atomic.AddUint64(&c.bytesOut, uint64(sizeInBytes))
-	atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
-	c.bytesUsedChan <- sizeInBytes
+
+	// optimistic locking - we started the read operation to serve the client immediately
+	// but before committing the read file to cache we must check whether a delete call
+	// came in. the file we just read could be stale.
+	c.cacheLock.RLock()
+	defer c.cacheLock.RUnlock()
+	if deleteTimestampBefore == c.deleteTimestamp {
+		err = os.Rename(tmpName, fullPath)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		tmpRemoved = true
+
+		err = PutFile(c.db, hostPrefixedPath)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
+		c.bytesUsedChan <- sizeInBytes
+	}
 	return nil
 }
 
@@ -282,6 +295,9 @@ func (c *Cache) DeleteWithPrefix(prefix string) (freedBytes uint64, err error) {
 }
 
 func (c *Cache) Delete(path string) (freedBytes uint64, err error) {
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
+	c.deleteTimestamp += 1
 	fullPath := c.buildCachePath(path)
 	stat, err := os.Stat(fullPath)
 	if err != nil {
@@ -361,6 +377,8 @@ func GetCache(config Configuration, db *leveldb.DB, storageProviders map[string]
 		bytesUsedChan:             make(chan int64, 1000),
 		freeSpaceBatchSizeInBytes: config.FreeSpaceBatchSizeInBytes,
 		startedAt:                 time.Now(),
+		deleteTimestamp:           0,
+		cacheLock:                 &sync.RWMutex{},
 	}
 	return
 }
