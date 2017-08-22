@@ -256,16 +256,18 @@ func (c *Cache) FreeSpaceWatchdog() {
 }
 
 func (c *Cache) freeSpace() {
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
 	paths, err := ListPathsByModificationTime(c.db)
 	if err != nil {
 		log.Fatal(err)
 	}
+	bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 	for _, path := range paths {
-		bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 		if bytesLeftToRemove <= 0 {
 			break
 		}
-		_, err := c.Delete(path)
+		_, err := c.delete(path, false)
 		if err != nil {
 			log.Println("failed to delete " + path)
 			log.Println(err)
@@ -294,9 +296,15 @@ func (c *Cache) DeleteWithPrefix(prefix string) (freedBytes uint64, err error) {
 	return
 }
 
-func (c *Cache) Delete(path string) (freedBytes uint64, err error) {
-	c.cacheLock.Lock()
-	defer c.cacheLock.Unlock()
+func (c *Cache) Delete(path string) (uint64, error) {
+	return c.delete(path, true)
+}
+
+func (c *Cache) delete(path string, acquireLock bool) (freedBytes uint64, err error) {
+	if acquireLock {
+		c.cacheLock.Lock()
+		defer c.cacheLock.Unlock()
+	}
 	c.deleteTimestamp += 1
 	fullPath := c.buildCachePath(path)
 	stat, err := os.Stat(fullPath)
