@@ -25,7 +25,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -35,10 +34,11 @@ import (
 )
 
 type S3Client struct {
-	bucket    string
-	path      string
-	accessKey string
-	secretKey string
+	bucket          string
+	path            string
+	preserveHeaders []string
+	accessKey       string
+	secretKey       string
 }
 
 func (c S3Client) buildS3Url(p string) string {
@@ -51,13 +51,14 @@ func (c S3Client) buildS3Url(p string) string {
 	return url.String()
 }
 
-func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
+func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storageProviderErr *StorageProviderError) {
 	url := c.buildS3Url(path)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return &StorageProviderError{http.StatusInternalServerError, err}
+		return 0, &StorageProviderError{http.StatusInternalServerError, err}
 	}
 	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+
 	s3.Sign(req, s3.Keys{
 		AccessKey: c.accessKey,
 		SecretKey: c.secretKey,
@@ -65,19 +66,25 @@ func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
 	client := http.DefaultClient
 	res, err := client.Do(req)
 	if err != nil {
-		return &StorageProviderError{http.StatusServiceUnavailable, err}
+		return 0, &StorageProviderError{http.StatusServiceUnavailable, err}
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		err = errors.New(fmt.Sprintf("status code: %d", res.StatusCode))
-		return &StorageProviderError{res.StatusCode, err}
+		return 0, &StorageProviderError{res.StatusCode, err}
 	}
-	w.WriteSize(res.ContentLength)
-	_, err = io.Copy(w, res.Body)
+
+	for _, preserveHeader := range c.preserveHeaders {
+		if val := res.Header.Get(preserveHeader); val != "" {
+			w.PreserveAndWriteHeader(preserveHeader, val)
+		}
+	}
+
+	bytesRead, err = w.Write(res.Body)
 	if err != nil {
-		return &StorageProviderError{http.StatusRequestTimeout, err}
+		return 0, &StorageProviderError{http.StatusRequestTimeout, err}
 	}
-	return nil
+	return
 }
 
 func GetS3Clients(config Configuration) map[string]StorageProvider {
@@ -85,10 +92,11 @@ func GetS3Clients(config Configuration) map[string]StorageProvider {
 
 	for name, hostConfig := range config.Hosts {
 		clients[name] = S3Client{
-			bucket:    hostConfig.Bucket,
-			path:      hostConfig.Path,
-			accessKey: hostConfig.AccessKey,
-			secretKey: hostConfig.SecretKey,
+			bucket:          hostConfig.Bucket,
+			path:            hostConfig.Path,
+			preserveHeaders: hostConfig.PreserveHeaders,
+			accessKey:       hostConfig.AccessKey,
+			secretKey:       hostConfig.SecretKey,
 		}
 	}
 

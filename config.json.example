@@ -10,8 +10,10 @@
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
 	"SigRequired":	false,
+	"DefaultPreserveHeaders": ["Cache-Control", "ETag"],
+	"GzipContentTypes": ["text/html", "application/x-javascript", "text/css", "application/javascript", "text/javascript", "text/plain", "text/xml", "application/json", "application/vnd.ms-fontobject", "application/x-font-opentype", "application/x-font-truetype", "application/x-font-ttf", "application/xml", "font/eot", "font/opentype", "font/otf", "image/svg+xml", "image/vnd.microsoft.icon"],
 	"Hosts": {
-		"example.org": { "Bucket": "yourS3bucketname", "Path": "site1", "AccessKey": "", "SecretKey": "" },
-		"example.com": { "Bucket": "yourS3bucketname", "Path": "site2", "AccessKey": "", "SecretKey": "" }
+		"example.org": { "Bucket": "yourS3bucketname", "Path": "site1" },
+		"example.com": { "Bucket": "yourS3bucketname", "Path": "site2" }
 	}
 }

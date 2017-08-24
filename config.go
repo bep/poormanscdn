@@ -30,6 +30,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 )
 
 const (
@@ -40,9 +41,11 @@ const (
 
 type Configuration struct {
 	Listen                    string
+	GzipContentTypes          []string
 	Hosts                     map[string]Host
 	DefaultAccessKey          string
 	DefaultSecretKey          string
+	DefaultPreserveHeaders    []string
 	TmpDir                    string
 	CacheDir                  string
 	CacheSize                 uint64
@@ -83,8 +86,9 @@ type Host struct {
 	Path   string
 
 	// Note that if not set, these will get their values from the default or from env.
-	AccessKey string
-	SecretKey string
+	PreserveHeaders []string
+	AccessKey       string
+	SecretKey       string
 }
 
 func readConfiguration(r io.Reader) (conf Configuration, err error) {
@@ -126,7 +130,39 @@ func readConfiguration(r io.Reader) (conf Configuration, err error) {
 		return
 	}
 
+	mandatoryPreserveHeaders := [...]string{"Content-Type"}
+	illegalPreserveHeaders := [...]string{"Content-Encoding", "Accept-Ranges"}
+
 	for name, host := range conf.Hosts {
+		if host.PreserveHeaders == nil {
+			host.PreserveHeaders = conf.DefaultPreserveHeaders
+		}
+		preserveHeaders := make([]string, len(host.PreserveHeaders))
+		copy(preserveHeaders, host.PreserveHeaders)
+
+		for _, illegalHeader := range illegalPreserveHeaders {
+			for _, v := range host.PreserveHeaders {
+				if strings.ToLower(v) == strings.ToLower(illegalHeader) {
+					err = errors.New(fmt.Sprintf("header %s cannot be preserved", illegalHeader))
+				}
+			}
+		}
+
+		for _, mandatoryHeader := range mandatoryPreserveHeaders {
+			found := false
+			for _, v := range host.PreserveHeaders {
+				if v == mandatoryHeader {
+					found = true
+					break
+				}
+			}
+			if !found {
+				preserveHeaders = append(preserveHeaders, mandatoryHeader)
+				log.Printf("header %s added to PreserveHeaders as it is mandatory\n", mandatoryHeader)
+			}
+		}
+		host.PreserveHeaders = preserveHeaders
+
 		if host.AccessKey == "" {
 			host.AccessKey = conf.DefaultAccessKey
 		}

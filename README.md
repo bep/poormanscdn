@@ -47,9 +47,11 @@ All configuration is done by editing the `config.json` file. Options:
 - `TLSCertificateDir`: where to store Let's Encrypt certificates (if blank, will disable https:// on all hosts). See *Using HTTPS* below.
 - `FreeSpaceBatchSizeInBytes`: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
 - `SigRequired`: if true, only allows downloads using signed URLs
+- `GzipContentTypes`: gzip all cached files which had these Content-Type headers when downloaded from S3. 
+- `DefaultPreserveHeaders`: these headers when returned from S3 will be passed through to the client and saved in the cache to be replayed in future requests.
 - `Hosts`: dictionary of virtual hosts (see *Virtual Hosts* below), in the format:
-	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseDefaultAccessKey", "SecretKey": "leaveblanktouseDefaultSecretKey" }`
-
+	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseDefaultAccessKey", "SecretKey": "leaveblanktouseDefaultSecretKey", "PreserveHeaders": ["Cache-Control"] }`
+   
    Note: Usage of HTTPS requires a valid domain name.
 
 
@@ -77,8 +79,8 @@ You can invalidate cached files in 2 ways:
 
 A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have three domains `myblog.com`, `familyblog.com`, and `carrentals.com`, with:
 
-- `myblog.com` and `familyblog.com` using `DefaultAccessKey` and `DefaultSecretKey` and sharing S3 bucket `blogs` under different paths
-- `carrentals.com` in a separate AWS account and bucket using the root path
+- `myblog.com` and `familyblog.com` using `DefaultAccessKey`, `DefaultSecretKey`, `DefaultPreserveHeaders` and sharing S3 bucket `blogs` under different paths
+- `carrentals.com` in a separate AWS account and bucket using the root path and only preserving the `ETag` header.
 
 Your `Hosts` configuration would be:
 
@@ -86,7 +88,7 @@ Your `Hosts` configuration would be:
 "Hosts": {
 	"myblog.com": { "Bucket": "blogs", "Path": "my" },
 	"familyblog.com": { "Bucket": "blogs", "Path": "family" },
-	"carrentals.com": { "Bucket": "carrentals", "AccessKey": "someotherawsaccesskey", "SecretKey": "someotherawssecretkey" }
+	"carrentals.com": { "Bucket": "carrentals", "AccessKey": "someotherawsaccesskey", "SecretKey": "someotherawssecretkey", "PreserveHeaders": ["ETag"] }
 }
 ```
 
@@ -156,6 +158,8 @@ I would love to receive pull requests for the following features:
 - [ ] PHP signing lib
 - [ ] Ruby signing lib
 - [x] Secrets Configuration via ENV
+- [x] gzip
+- [x] Header preservation
 
 # License
 
