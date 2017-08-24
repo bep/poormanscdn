@@ -117,6 +117,7 @@ type CacheWriter struct {
 	preservedHeaders map[string]string
 	cacheFileWriter  io.Writer
 	bytesWritten     int64
+	storageProvider  StorageProvider
 }
 
 func (c *CacheWriter) Write(reader io.Reader) (bytesWritten int64, err error) {
@@ -125,8 +126,19 @@ func (c *CacheWriter) Write(reader io.Reader) (bytesWritten int64, err error) {
 	return
 }
 
-func (c *CacheWriter) PreserveHeader(name, value string) {
-	c.preservedHeaders[name] = value
+func (c *CacheWriter) PreserveAndWriteHeaders(storageProviderHeaders http.Header) {
+	c.WriteHeader("Content-Length", storageProviderHeaders.Get("Content-Length")) // this is why we only accepted identity encoding when fetching file from S3
+
+	for headerName, headerVal := range storageProviderHeaders {
+		headerNameLower := strings.ToLower(headerName)
+		firstVal := headerVal[0]
+		c.preservedHeaders[headerNameLower] = firstVal
+		for _, preserveHeader := range c.storageProvider.PreserveHeaders() {
+			if headerNameLower == strings.ToLower(preserveHeader) {
+				c.WriteHeader(preserveHeader, firstVal)
+			}
+		}
+	}
 }
 
 func (c *CacheWriter) WriteHeader(name, value string) {
@@ -224,6 +236,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		client:           cacheClient,
 		preservedHeaders: make(map[string]string),
 		cacheFileWriter:  tmp,
+		storageProvider:  storage,
 	}
 
 	// can't accept range requests since we want to cache the full file,
