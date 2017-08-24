@@ -26,7 +26,7 @@ To update poormanscdn's dependencies, use `go get` with the `-u` option.
 
     go get -u -v github.com/alexandres/poormanscdn
 
-`poormanscdn` expects to find `config.json` in the current working directory. See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an example configuration.
+`poormanscdn --config config.json`. See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an example configuration.
 
 ## Configuration
 
@@ -45,7 +45,7 @@ All configuration is done by editing the `config.json` file. Options:
 - `SigRequired`: if true, only allows downloads using signed URLs
 - `Hosts`: dictionary of virtual hosts (see *Virtual Hosts* below), in the format:
 	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseDefaultAccessKey", "SecretKey": "leaveblanktouseDefaultSecretKey" }`
-   
+
    Note: Usage of HTTPS requires a valid domain name.
 
 
@@ -61,7 +61,7 @@ poormanscdn must have write access to CacheDir, DatabaseDir, and TmpDir, which m
 
 You can invalidate cached files in 2 ways:
 
-1. Send a signed DELETE request to `http://poormanscdnhost/somepath.ext` to purge 
+1. Send a signed DELETE request to `http://poormanscdnhost/somepath.ext` to purge
 `somepath.ext` from the cache. Alternatively, send the request `http://poormanscdnhost/` (base path) to invalidate the entire cache.
 
    **Pro tip:** you can get [Netlify](http://netlify.com)-like functionality by creating a git commit hook that
@@ -79,7 +79,7 @@ A single poormanscdn server can serve multiple domains through virtual hosts. Fo
 Your `Hosts` configuration would be:
 
 ```
-"Hosts": { 
+"Hosts": {
 	"myblog.com": { "Bucket": "blogs", "Path": "my" },
 	"familyblog.com": { "Bucket": "blogs", "Path": "family" },
 	"carrentals.com": { "Bucket": "carrentals", "AccessKey": "someotherawsaccesskey", "SecretKey": "someotherawssecretkey" }
@@ -128,7 +128,7 @@ have been deployed to S3.
 
 **Viewing Cache Stats**
 
-Construct a signed url as follows: 
+Construct a signed url as follows:
 
 ```python
 import poormanscdn
