@@ -24,6 +24,7 @@ package main
 
 import (
 	"crypto/tls"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
@@ -41,7 +42,9 @@ func httpError(w http.ResponseWriter, err error, code int) {
 
 func main() {
 	checkFdlimit()
-	config, err := getConfiguration("config.json")
+	configFile := flag.String("config", "config.json", "path to config file")
+	flag.Parse()
+	config, err := getConfiguration(*configFile)
 	if err != nil {
 		log.Fatal(err)
 	}
