@@ -26,7 +26,11 @@ To update poormanscdn's dependencies, use `go get` with the `-u` option.
 
     go get -u -v github.com/alexandres/poormanscdn
 
-`poormanscdn --config config.json`. See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an example configuration.
+Run poormanscdn:
+
+    poormanscdn --config config.json
+
+See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an example configuration.
 
 ## Configuration
 
