@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NYTimes/gziphandler"
 	"golang.org/x/crypto/acme/autocert"
 )
 
@@ -64,7 +65,14 @@ func main() {
 
 	h := http.NewServeMux()
 
-	h.HandleFunc("/", makeHandler(config, cache, CacheHandler))
+	gzipHandler, err := gziphandler.GzipHandlerWithOpts(gziphandler.ContentTypes(config.GzipContentTypes))
+	if err != nil {
+		log.Fatal(err)
+	}
+	//gzipHandler := gziphandler.GzipHandler(http.HandlerFunc(makeHandler(config, cache, CacheHandler)))
+	cacheHandlerFunc := makeHandlerFunc(config, cache, CacheHandler)
+
+	h.Handle("/", gzipHandler(http.HandlerFunc(cacheHandlerFunc)))
 
 	needsTLS, err := config.isTLSConfigured()
 	if err != nil {
@@ -92,7 +100,7 @@ func main() {
 	}
 }
 
-func makeHandler(config Configuration, cache *Cache, handler func(Configuration, *Cache, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
+func makeHandlerFunc(config Configuration, cache *Cache, handler func(Configuration, *Cache, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		status, err := handler(config, cache, w, r)
 		if status != http.StatusOK {

@@ -29,13 +29,11 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"mime"
 	"net"
 	"net/http"
 	"os"
 	pathLib "path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,8 +44,7 @@ import (
 )
 
 type StorageProvider interface {
-	Read(path string, w *CacheWriter) *StorageProviderError
-	//Stat(path string) (Stat, error)
+	Read(path string, w *CacheWriter) (bytesRead int64, err *StorageProviderError)
 }
 
 type StorageProviderError struct {
@@ -101,12 +98,6 @@ func (c *Cache) getStats() string {
 	return string(stats)
 }
 
-type CacheWriter struct {
-	client CacheClient
-	io.Writer
-	bytesWritten int64
-}
-
 type CacheClient struct {
 	http.ResponseWriter
 	req *http.Request
@@ -120,9 +111,27 @@ func (c CacheClient) host() string {
 	return host
 }
 
-func (c *CacheWriter) WriteSize(sizeInBytes int64) {
-	c.client.Header().Set("Content-Length", strconv.FormatInt(sizeInBytes, 10))
-	c.bytesWritten = sizeInBytes
+type CacheWriter struct {
+	client           CacheClient
+	preservedHeaders map[string]string
+	cacheFileWriter  io.Writer
+	bytesWritten     int64
+}
+
+func (c *CacheWriter) Write(reader io.Reader) (bytesWritten int64, err error) {
+	multiWriter := io.MultiWriter(c.cacheFileWriter, c.client)
+	bytesWritten, err = io.Copy(multiWriter, reader)
+	return
+}
+
+func (c *CacheWriter) PreserveAndWriteHeader(name, value string) {
+	log.Printf("header %s preserved with val %s\n", name, value)
+	c.preservedHeaders[name] = value
+	c.WriteHeader(name, value)
+}
+
+func (c *CacheWriter) WriteHeader(name, value string) {
+	c.client.Header().Set(name, value)
 }
 
 func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheClient) *CacheError {
@@ -160,6 +169,7 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 	deleteTimestampBefore := atomic.LoadUint64(&c.deleteTimestamp)
 
 	var file *os.File
+	var preservedHeaders map[string]string
 	// need to lock to ensure delete doesn't remove file
 	// between Stat and Open. Once we have file handle can release lock.
 	c.cacheLock.RLock()
@@ -171,13 +181,22 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		defer file.Close()
+		preservedHeaders, err = GetHeaders(c.db, hostPrefixedPath)
+		if err != nil {
+			c.cacheLock.RUnlock()
+			return &CacheError{http.StatusInternalServerError, err}
+		}
 	}
 	c.cacheLock.RUnlock()
 
 	if file != nil { // file is in cache
-		err = PutFile(c.db, hostPrefixedPath)
+		err = TouchFileAccessTime(c.db, hostPrefixedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
+		}
+		responseHeaders := cacheClient.Header()
+		for headerKey, headerValue := range preservedHeaders {
+			responseHeaders.Set(headerKey, headerValue)
 		}
 		atomic.AddUint64(&c.bytesOut, uint64(stat.Size()))
 		http.ServeContent(cacheClient, cacheClient.req, fullPath, stat.ModTime(), file)
@@ -200,16 +219,23 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		}
 	}()
 
-	multiWriter := io.MultiWriter(tmp, cacheClient)
-	cacheWriter := CacheWriter{cacheClient, multiWriter, 0}
+	cacheWriter := CacheWriter{
+		client:           cacheClient,
+		preservedHeaders: make(map[string]string),
+		cacheFileWriter:  tmp,
+	}
 
-	cacheClient.Header().Set("Content-Type", mime.TypeByExtension(pathLib.Ext(fullPath)))
-	cacheClient.Header().Set("Accept-Ranges", "none")
+	// can't accept range requests since we want to cache the full file,
+	// future requests for cache file do support range requests
+	cacheClient.ResponseWriter.Header().Set("Accept-Ranges", "none")
 
-	storageProviderError := storage.Read(path, &cacheWriter)
+	sizeInBytes, storageProviderError := storage.Read(path, &cacheWriter)
 	if storageProviderError != nil {
 		return &CacheError{storageProviderError.status, storageProviderError}
 	}
+	atomic.AddUint64(&c.bytesOut, uint64(sizeInBytes))
+	atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
+
 	dirPath := pathLib.Dir(fullPath)
 	err = os.MkdirAll(dirPath, 0755)
 	if err != nil {
@@ -226,26 +252,25 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusInternalServerError, err}
 	}
 
-	sizeInBytes := cacheWriter.bytesWritten
-	atomic.AddUint64(&c.bytesOut, uint64(sizeInBytes))
-
 	// optimistic locking - we started the read operation to serve the client immediately
 	// but before committing the read file to cache we must check whether a delete call
 	// came in. the file we just read could be stale.
-	c.cacheLock.RLock()
-	defer c.cacheLock.RUnlock()
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
 	if deleteTimestampBefore == c.deleteTimestamp {
+		err = TouchFileAccessTime(c.db, hostPrefixedPath)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		err = PutHeaders(c.db, hostPrefixedPath, cacheWriter.preservedHeaders)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
 		err = os.Rename(tmpName, fullPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		tmpRemoved = true
-
-		err = PutFile(c.db, hostPrefixedPath)
-		if err != nil {
-			return &CacheError{http.StatusInternalServerError, err}
-		}
-		atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
 		c.bytesUsedChan <- sizeInBytes
 	}
 	return nil
@@ -371,9 +396,14 @@ func GetCache(config Configuration, db *leveldb.DB, storageProviders map[string]
 				return err
 			}
 			if !has {
-				PutFile(db, path)
+				log.Printf("file %s in cache but headers missing, deleting\n", path)
+				err = os.Remove(path)
+				if err != nil {
+					return err
+				}
+			} else {
+				bytesInUse += uint64(f.Size())
 			}
-			bytesInUse += uint64(f.Size())
 		}
 		return nil
 	})
