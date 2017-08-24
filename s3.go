@@ -58,6 +58,7 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 		return 0, &StorageProviderError{http.StatusInternalServerError, err}
 	}
 	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+	req.Header.Add("Accept-Encoding", "identity") // we don't want gzipped responsed here so that we can send the Content-Length THEN stream the file, otherwise user won't have progress report
 
 	s3.Sign(req, s3.Keys{
 		AccessKey: c.accessKey,
@@ -73,6 +74,8 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 		err = errors.New(fmt.Sprintf("status code: %d", res.StatusCode))
 		return 0, &StorageProviderError{res.StatusCode, err}
 	}
+
+	w.WriteHeader("Content-Length", res.Header.Get("Content-Length")) // this is why we only accepted identity encoding
 
 	for _, preserveHeader := range c.preserveHeaders {
 		if val := res.Header.Get(preserveHeader); val != "" {
