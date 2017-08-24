@@ -29,7 +29,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
 	pathLib "path"
@@ -67,7 +66,6 @@ type Stat struct {
 
 type Cache struct {
 	db                        *leveldb.DB
-	storageProviders          map[string]StorageProvider
 	cacheDir                  string
 	cacheSize                 uint64
 	tmpDir                    string
@@ -104,14 +102,6 @@ type CacheClient struct {
 	req *http.Request
 }
 
-func (c CacheClient) host() string {
-	host, _, err := net.SplitHostPort(c.req.Host)
-	if err != nil {
-		host = c.req.Host // c.req.Host not host:port, likely only host
-	}
-	return host
-}
-
 type CacheWriter struct {
 	client           CacheClient
 	preservedHeaders map[string]string
@@ -133,10 +123,17 @@ func (c *CacheWriter) PreserveAndWriteHeaders(storageProviderHeaders http.Header
 		headerNameLower := strings.ToLower(headerName)
 		firstVal := headerVal[0]
 		c.preservedHeaders[headerNameLower] = firstVal
-		for _, preserveHeader := range c.storageProvider.PreserveHeaders() {
-			if headerNameLower == strings.ToLower(preserveHeader) {
-				c.WriteHeader(preserveHeader, firstVal)
-			}
+		mapHeaderIfPreserved(headerNameLower, c.storageProvider.PreserveHeaders(), func(preservedName string) {
+			c.WriteHeader(preservedName, firstVal)
+		})
+	}
+}
+
+func mapHeaderIfPreserved(headerName string, preservedHeaders []string, callback func(preservedName string)) {
+	for _, preserveHeader := range preservedHeaders {
+		if headerName == strings.ToLower(preserveHeader) { // headerName already lowered
+			callback(preserveHeader)
+			return
 		}
 	}
 }
@@ -145,7 +142,7 @@ func (c *CacheWriter) WriteHeader(name, value string) {
 	c.client.Header().Set(name, value)
 }
 
-func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheClient) *CacheError {
+func (c *Cache) Read(namespace string, storage StorageProvider, path string, lastModifiedAt time.Time, cacheClient CacheClient) *CacheError {
 	pathParts := strings.Split(path, "/")
 	for _, elem := range pathParts {
 		if elem == "." || elem == ".." {
@@ -160,12 +157,6 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusBadRequest, err}
 	}
 
-	host := cacheClient.host()
-	storage, found := c.storageProviders[host]
-	if !found {
-		return &CacheError{http.StatusBadRequest, errors.New(fmt.Sprintf("storage provider not found for host %s", host))}
-	}
-
 	if path == "cacheStats" {
 		_, err := fmt.Fprint(cacheClient, c.getStats())
 		if err != nil {
@@ -174,8 +165,8 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return nil
 	}
 
-	hostPrefixedPath := pathLib.Join(host, path)
-	fullPath := c.buildCachePath(hostPrefixedPath)
+	namespacedPath := pathLib.Join(namespace, path)
+	fullPath := c.buildCachePath(namespacedPath)
 
 	deleteTimestampBefore := atomic.LoadUint64(&c.deleteTimestamp)
 
@@ -192,24 +183,23 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		defer file.Close()
-		preservedHeaders, err = GetHeaders(c.db, hostPrefixedPath)
+		preservedHeaders, err = GetHeaders(c.db, namespacedPath)
 		if err != nil {
-			c.cacheLock.RUnlock()
+			c.cacheLock.RUnlock() // these multiple Unlocks are ugly. should refactor to only have one
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 	}
 	c.cacheLock.RUnlock()
 
 	if file != nil { // file is in cache
-		err = TouchFileAccessTime(c.db, hostPrefixedPath)
+		err = TouchFileAccessTime(c.db, namespacedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
-		responseHeaders := cacheClient.Header()
-		for _, headerName := range storage.PreserveHeaders() {
-			if val, ok := preservedHeaders[strings.ToLower(headerName)]; ok {
-				responseHeaders.Set(headerName, val)
-			}
+		for headerName, headerVal := range preservedHeaders {
+			mapHeaderIfPreserved(headerName, storage.PreserveHeaders(), func(preservedName string) {
+				cacheClient.Header().Set(headerName, headerVal)
+			})
 		}
 		atomic.AddUint64(&c.bytesOut, uint64(stat.Size()))
 		http.ServeContent(cacheClient, cacheClient.req, fullPath, stat.ModTime(), file)
@@ -272,11 +262,11 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 	c.cacheLock.Lock()
 	defer c.cacheLock.Unlock()
 	if deleteTimestampBefore == c.deleteTimestamp {
-		err = TouchFileAccessTime(c.db, hostPrefixedPath)
+		err = TouchFileAccessTime(c.db, namespacedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
-		err = PutHeaders(c.db, hostPrefixedPath, cacheWriter.preservedHeaders)
+		err = PutHeaders(c.db, namespacedPath, cacheWriter.preservedHeaders)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
@@ -324,16 +314,17 @@ func (c *Cache) freeSpace() {
 	}
 }
 
-func (c *Cache) DeleteWithPrefix(prefix string) (freedBytes uint64, err error) {
+func (c *Cache) DeleteAll(namespace string) (freedBytes uint64, err error) {
 	paths, err := ListPathsByModificationTime(c.db)
 	if err != nil {
 		log.Fatal(err)
 	}
-	for _, path := range paths {
-		if !strings.HasPrefix(path, prefix) {
+	for _, namespacedPath := range paths {
+		if !strings.HasPrefix(namespacedPath, namespace) {
 			continue
 		}
-		freedBytesForPath, err := c.Delete(path)
+		path := strings.TrimPrefix(namespacedPath, namespace+"/") // a little redundant but for clarity to avoid calling Delete with empty namespace
+		freedBytesForPath, err := c.Delete(namespace, path)
 		if err != nil {
 			log.Println("failed to delete " + path)
 			log.Println(err)
@@ -344,8 +335,8 @@ func (c *Cache) DeleteWithPrefix(prefix string) (freedBytes uint64, err error) {
 	return
 }
 
-func (c *Cache) Delete(path string) (uint64, error) {
-	return c.delete(path, true)
+func (c *Cache) Delete(namespace, path string) (uint64, error) {
+	return c.delete(pathLib.Join(namespace, path), true)
 }
 
 func (c *Cache) delete(path string, acquireLock bool) (freedBytes uint64, err error) {
@@ -380,7 +371,7 @@ func (c *Cache) getTmpFile() (file *os.File, err error) {
 	return
 }
 
-func GetCache(config Configuration, db *leveldb.DB, storageProviders map[string]StorageProvider) (cache *Cache, err error) {
+func GetCache(config Configuration, db *leveldb.DB) (cache *Cache, err error) {
 	stat, err := os.Stat(config.CacheDir)
 	if err != nil {
 		return
@@ -430,7 +421,6 @@ func GetCache(config Configuration, db *leveldb.DB, storageProviders map[string]
 
 	cache = &Cache{
 		db:                        db,
-		storageProviders:          storageProviders,
 		cacheDir:                  config.CacheDir,
 		cacheSize:                 config.CacheSize,
 		tmpDir:                    config.TmpDir,

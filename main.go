@@ -54,11 +54,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	storageClients := GetS3Clients(config)
+	storageProviders := GetS3Clients(config)
 	if err != nil {
 		log.Fatal(err)
 	}
-	cache, err := GetCache(config, db, storageClients)
+	cache, err := GetCache(config, db)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func main() {
 		log.Fatal(err)
 	}
 	//gzipHandler := gziphandler.GzipHandler(http.HandlerFunc(makeHandler(config, cache, CacheHandler)))
-	cacheHandlerFunc := makeHandlerFunc(config, cache, CacheHandler)
+	cacheHandlerFunc := makeHandlerFunc(config, cache, storageProviders, CacheHandler)
 
 	h.Handle("/", gzipHandler(http.HandlerFunc(cacheHandlerFunc)))
 
@@ -103,9 +103,9 @@ func main() {
 	}
 }
 
-func makeHandlerFunc(config Configuration, cache *Cache, handler func(Configuration, *Cache, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
+func makeHandlerFunc(config Configuration, cache *Cache, storageProviders map[string]StorageProvider, handler func(Configuration, *Cache, map[string]StorageProvider, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
-		status, err := handler(config, cache, w, r)
+		status, err := handler(config, cache, storageProviders, w, r)
 		if status != http.StatusOK {
 			if w.Header().Get("Content-Length") == "" { // response not yet sent, ok to write to repsonse
 				http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)

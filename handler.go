@@ -26,16 +26,24 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"path"
 	"strconv"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
 )
 
-func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (status int, err error) {
+func CacheHandler(config Configuration, cache *Cache, storageProviders map[string]StorageProvider, w http.ResponseWriter, r *http.Request) (status int, err error) {
 	urlPath := client.TrimPath(r.URL.Path)
 	q := r.URL.Query()
+
+	host, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		host = r.Host // c.req.Host not host:port, likely only host
+	}
+	storage, found := storageProviders[host]
+	if !found {
+		return http.StatusBadRequest, errors.New("invalid host")
+	}
 
 	lastModifiedAtInt := int64(0) // no cached file will have timestamp <= 0
 
@@ -55,11 +63,6 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	//     - SigRequired is true
 	//     - DELETE request
 	if lastModifiedAtInt > 0 || config.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			return http.StatusInternalServerError, errors.New("bad remoteaddr")
-		}
-
 		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, urlPath, lastModifiedAt, q.Get("expires"), q.Get("host"),
 			q.Get("domain"), host, r.Referer())
 		if err != nil {
@@ -68,19 +71,10 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	}
 
 	if r.Method == http.MethodDelete {
-		host, _, err := net.SplitHostPort(r.Host)
-		if err != nil {
-			host = r.Host // r.Host not host:port, likely only host
-		}
-		_, found := config.Hosts[host]
-		if !found {
-			return http.StatusBadRequest, errors.New("config not found for host")
-		}
-
 		if urlPath == "" {
-			_, err = cache.DeleteWithPrefix(host)
+			_, err = cache.DeleteAll(host)
 		} else {
-			_, err = cache.Delete(path.Join(host, urlPath))
+			_, err = cache.Delete(host, urlPath)
 		}
 		if err != nil {
 			return http.StatusInternalServerError, errors.New("failed to delete")
@@ -90,7 +84,7 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 		if r.URL.Path[len(r.URL.Path)-1] == '/' {
 			urlPath += "/index.html" // support static websites
 		}
-		cacheError := cache.Read(urlPath, lastModifiedAtTime, cacheClient)
+		cacheError := cache.Read(host, storage, urlPath, lastModifiedAtTime, cacheClient)
 		if cacheError != nil {
 			return cacheError.status, cacheError
 		}
