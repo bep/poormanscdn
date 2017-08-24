@@ -28,6 +28,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/kr/s3"
@@ -77,9 +78,14 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 
 	w.WriteHeader("Content-Length", res.Header.Get("Content-Length")) // this is why we only accepted identity encoding
 
-	for _, preserveHeader := range c.preserveHeaders {
-		if val := res.Header.Get(preserveHeader); val != "" {
-			w.PreserveAndWriteHeader(preserveHeader, val)
+	for headerName, headerVal := range res.Header {
+		headerNameLower := strings.ToLower(headerName)
+		firstVal := headerVal[0]
+		w.PreserveHeader(headerNameLower, firstVal)
+		for _, preserveHeader := range c.preserveHeaders {
+			if headerNameLower == strings.ToLower(preserveHeader) {
+				w.WriteHeader(preserveHeader, firstVal)
+			}
 		}
 	}
 
@@ -88,6 +94,10 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 		return 0, &StorageProviderError{http.StatusRequestTimeout, err}
 	}
 	return
+}
+
+func (c S3Client) PreserveHeaders() []string {
+	return c.preserveHeaders
 }
 
 func GetS3Clients(config Configuration) map[string]StorageProvider {

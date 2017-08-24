@@ -60,7 +60,7 @@ func PutHeaders(db *leveldb.DB, path string, headers map[string]string) (err err
 	enc := gob.NewEncoder(&headerBuf)
 	err = enc.Encode(headers)
 	if err != nil {
-		return err
+		return
 	}
 	err = db.Put([]byte(namespacedPath(headersNamepace, path)), headerBuf.Bytes(), nil)
 	return
@@ -70,9 +70,6 @@ func GetHeaders(db *leveldb.DB, path string) (headers map[string]string, err err
 	headerBytes, err := db.Get([]byte(namespacedPath(headersNamepace, path)), nil)
 	headerBuf := bytes.NewBuffer(headerBytes)
 	if err != nil {
-		if err == leveldb.ErrNotFound {
-			return nil, nil
-		}
 		return
 	}
 	dec := gob.NewDecoder(headerBuf)

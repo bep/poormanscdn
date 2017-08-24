@@ -45,6 +45,7 @@ import (
 
 type StorageProvider interface {
 	Read(path string, w *CacheWriter) (bytesRead int64, err *StorageProviderError)
+	PreserveHeaders() []string
 }
 
 type StorageProviderError struct {
@@ -124,10 +125,8 @@ func (c *CacheWriter) Write(reader io.Reader) (bytesWritten int64, err error) {
 	return
 }
 
-func (c *CacheWriter) PreserveAndWriteHeader(name, value string) {
-	log.Printf("header %s preserved with val %s\n", name, value)
+func (c *CacheWriter) PreserveHeader(name, value string) {
 	c.preservedHeaders[name] = value
-	c.WriteHeader(name, value)
 }
 
 func (c *CacheWriter) WriteHeader(name, value string) {
@@ -195,8 +194,10 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		responseHeaders := cacheClient.Header()
-		for headerKey, headerValue := range preservedHeaders {
-			responseHeaders.Set(headerKey, headerValue)
+		for _, headerName := range storage.PreserveHeaders() {
+			if val, ok := preservedHeaders[strings.ToLower(headerName)]; ok {
+				responseHeaders.Set(headerName, val)
+			}
 		}
 		atomic.AddUint64(&c.bytesOut, uint64(stat.Size()))
 		http.ServeContent(cacheClient, cacheClient.req, fullPath, stat.ModTime(), file)

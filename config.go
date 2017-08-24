@@ -131,7 +131,7 @@ func readConfiguration(r io.Reader) (conf Configuration, err error) {
 	}
 
 	mandatoryPreserveHeaders := [...]string{"Content-Type"}
-	illegalPreserveHeaders := [...]string{"Content-Encoding", "Accept-Ranges"}
+	illegalPreserveHeaders := [...]string{"Content-Encoding", "Accept-Ranges", "Content-Length"}
 
 	for name, host := range conf.Hosts {
 		if host.PreserveHeaders == nil {
