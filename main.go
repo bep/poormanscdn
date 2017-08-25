@@ -68,14 +68,24 @@ func main() {
 
 	h := http.NewServeMux()
 
+	cacheHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, err := CacheHandler(config, cache, storageProviders, w, r)
+		contentLength := getContentLength(w)
+		if status != http.StatusOK {
+			if contentLength == 0 { // response not yet sent, ok to write error to response
+				http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)
+			}
+			WriteError(os.Stderr, r, time.Now(), status, err) // log all errors to stderr
+		}
+		WriteCombinedLog(os.Stdout, r, *r.URL, time.Now(), status, contentLength)
+	})
+
 	gzipHandler, err := gziphandler.GzipHandlerWithOpts(gziphandler.ContentTypes(config.GzipContentTypes))
 	if err != nil {
 		log.Fatal(err)
 	}
-	//gzipHandler := gziphandler.GzipHandler(http.HandlerFunc(makeHandler(config, cache, CacheHandler)))
-	cacheHandlerFunc := makeHandlerFunc(config, cache, storageProviders, CacheHandler)
 
-	h.Handle("/", gzipHandler(http.HandlerFunc(cacheHandlerFunc)))
+	h.Handle("/", gzipHandler(cacheHandler))
 
 	needsTLS, err := config.isTLSConfigured()
 	if err != nil {
@@ -100,19 +110,6 @@ func main() {
 			Handler: h,
 		}
 		log.Fatal(s.ListenAndServe())
-	}
-}
-
-func makeHandlerFunc(config Configuration, cache *Cache, storageProviders map[string]StorageProvider, handler func(Configuration, *Cache, map[string]StorageProvider, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status, err := handler(config, cache, storageProviders, w, r)
-		if status != http.StatusOK {
-			if w.Header().Get("Content-Length") == "" { // response not yet sent, ok to write to repsonse
-				http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)
-			}
-			WriteError(os.Stderr, r, time.Now(), status, err) // log all errors to stderr
-		}
-		WriteCombinedLog(os.Stdout, r, *r.URL, time.Now(), status, getContentLength(w))
 	}
 }
 
