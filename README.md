@@ -43,7 +43,7 @@ All configuration is done by editing the `config.json` file. Options:
 - `TmpDir`: where to store temporary files, need not persist between executions
 - `CacheDir`: where to store cached files, should persist between executions to avoid emptying the cache
 - `CacheSize`: the maximum size in bytes of the cache - example: 40000000000 to use at most 40GB
-- `DatabaseDir`: where to store database files, should persist between executions to maintain last-downloaded times for cached files
+- `DatabaseDir`: where to store database files, should persist between executions to maintain last-downloaded times and headers for cached files
 - `TLSCertificateDir`: where to store Let's Encrypt certificates (if blank, will disable https:// on all hosts). See *Using HTTPS* below.
 - `FreeSpaceBatchSizeInBytes`: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
 - `GzipContentTypes`: gzip all cached files which had these Content-Type headers when downloaded from S3. 
