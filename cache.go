@@ -42,6 +42,10 @@ import (
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
+const (
+	CacheStatsPath = "cacheStats"
+)
+
 type StorageProvider interface {
 	Read(path string, w *CacheWriter) (bytesRead int64, err *StorageProviderError)
 	PreserveHeaders() []string
@@ -157,7 +161,7 @@ func (c *Cache) Read(namespace string, storage StorageProvider, path string, las
 		return &CacheError{http.StatusBadRequest, err}
 	}
 
-	if path == "cacheStats" {
+	if path == CacheStatsPath {
 		_, err := fmt.Fprint(cacheClient, c.getStats())
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}

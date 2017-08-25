@@ -38,7 +38,7 @@ def get_signed_url(secret, base_url, method, path, last_modified_at, expires_at,
     if last_modified_at:
         modified_str = last_modified_at.strftime("%s")
     q["modified"] = modified_str
-    expires_str = ""
+    expires_str = "0"
     if expires_at:
         expires_str = expires_at.strftime("%s")
     q["expires"] = expires_str

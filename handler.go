@@ -26,7 +26,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"strconv"
+	"net/url"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
@@ -46,28 +46,37 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	}
 	storage := host.storageProvider
 
-	lastModifiedAtInt := int64(0) // no cached file will have timestamp <= 0
-
-	// check if request wants to conditionally purge cache with modified invalidation
-	lastModifiedAt := q.Get("modified")
-	if lastModifiedAt != "" {
-		lastModifiedAtInt, err = strconv.ParseInt(lastModifiedAt, 10, 64)
-		if err != nil {
-			return http.StatusBadRequest, errors.New("bad modified")
-		}
+	// if ?modified=... not in query this will default to time.Unix(0, 0)
+	modifiedAt, err := client.UnixTimeStrToTime(q.Get(client.ModifiedParam))
+	if err != nil {
+		return http.StatusBadRequest, errors.New("bad modified date")
 	}
 
-	lastModifiedAtTime := time.Unix(lastModifiedAtInt, 0)
-
 	// require valid signature if
-	//     - modified threatens to purge cache or
+	//     - modified query parameter threatens to purge cache (modified > epoch) or
 	//     - SigRequired is true
 	//     - DELETE request
-	if lastModifiedAtInt > 0 || host.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
-		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, urlPath, lastModifiedAt, q.Get("expires"), q.Get("host"),
-			q.Get("domain"), hostname, r.Referer())
+	//     - view cacheStats
+	if !modifiedAt.Equal(client.ZeroTime()) || host.SigRequired || r.Method == http.MethodDelete || urlPath == CacheStatsPath {
+		sigParams, err := client.ParseAndAuthenticateSignedUrl(config.Secret, r.Method, r.URL.String())
 		if err != nil {
-			return http.StatusForbidden, errors.New("bad sig")
+			return http.StatusForbidden, err
+		}
+
+		// if expiration is not 0 and earlier than now fail
+		if !sigParams.Expires.Equal(client.ZeroTime()) && sigParams.Expires.Before(time.Now()) {
+			return http.StatusForbidden, errors.New("url expired")
+		}
+
+		if sigParams.UserHost != "" && sigParams.UserHost != r.RemoteAddr {
+			return http.StatusForbidden, errors.New("bad userhost")
+		}
+
+		if sigParams.Domain != "" {
+			parsedRefererUrl, err := url.Parse(r.Referer())
+			if err != nil || parsedRefererUrl.Host != sigParams.Domain {
+				return http.StatusForbidden, errors.New("bad referer")
+			}
 		}
 	}
 
@@ -85,7 +94,7 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 		if r.URL.Path[len(r.URL.Path)-1] == '/' {
 			urlPath += "/index.html" // support static websites
 		}
-		cacheError := cache.Read(hostname, storage, urlPath, lastModifiedAtTime, cacheClient)
+		cacheError := cache.Read(hostname, storage, urlPath, modifiedAt, cacheClient)
 		if cacheError != nil {
 			return cacheError.status, cacheError
 		}

@@ -20,49 +20,45 @@
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-package main
+package client
 
 import (
-	"flag"
-	"fmt"
-	"log"
+	"testing"
 	"time"
 
-	"github.com/alexandres/poormanscdn/client"
+	"github.com/stretchr/testify/assert"
 )
 
-var path, cdnUrl, method, domain, host, secret string
-var modified, expires int64
-
-func init() {
-	flag.StringVar(&cdnUrl, "cdnurl", "", "cdnurl")
-	flag.StringVar(&method, "method", "GET", "method")
-	flag.StringVar(&domain, "domain", "", "domain")
-	flag.StringVar(&host, "host", "", "host")
-	flag.Int64Var(&modified, "modified", 0, "modified")
-	flag.Int64Var(&expires, "expires", 0, "expires")
-	flag.StringVar(&path, "path", "", "path")
-	flag.StringVar(&secret, "secret", "", "secret")
+func TestSign(t *testing.T) {
+	method := "GET"
+	modified := time.Unix(1424, 0)
+	expires := time.Unix(3424, 0)
+	p := SigParams{
+		Method:   method,
+		Path:     "somepath",
+		UserHost: "someuser",
+		Domain:   "somedomain",
+		Modified: modified,
+		Expires:  expires,
+	}
+	secret := "dummy"
+	signedUrl, err := GetSignedUrl(secret, "http://dummyurl.com/", p)
+	assert.Nil(t, err)
+	p, err = ParseAndAuthenticateSignedUrl(secret, method, signedUrl)
+	assert.Nil(t, err)
+	assert.True(t, modified.Equal(p.Modified))
+	assert.True(t, expires.Equal(p.Expires))
+	// TODO: corrupt signedUrl and check that auth fails
 }
 
-func main() {
-	flag.Parse()
-	if cdnUrl == "" || secret == "" {
-		log.Fatal("cdnurl and secret are mandatory")
-	}
-	lastModifiedAt := time.Unix(modified, 0)
-	expiresAt := time.Unix(expires, 0)
-	p := client.SigParams{
-		Method:   method,
-		Path:     client.TrimPath(path),
-		UserHost: host,
-		Domain:   domain,
-		Modified: lastModifiedAt,
-		Expires:  expiresAt,
-	}
-	url, err := client.GetSignedUrl(secret, cdnUrl, p)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Print(url)
+func TestZeroTime(t *testing.T) {
+	assert.Equal(t, "0", timeToStr(ZeroTime()))
+
+	zeroTimeParsed, err := UnixTimeStrToTime("0")
+	assert.Nil(t, err)
+	assert.True(t, ZeroTime().Equal(zeroTimeParsed))
+
+	zeroTimeParsed, err = UnixTimeStrToTime("")
+	assert.Nil(t, err)
+	assert.True(t, ZeroTime().Equal(zeroTimeParsed))
 }
