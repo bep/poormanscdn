@@ -86,20 +86,3 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 func (c S3Client) PreserveHeaders() []string {
 	return c.preserveHeaders
 }
-
-func GetS3Clients(config Configuration) map[string]StorageProvider {
-	clients := make(map[string]StorageProvider)
-
-	for name, hostConfig := range config.Hosts {
-		clients[name] = S3Client{
-			bucket:          hostConfig.Bucket,
-			path:            hostConfig.Path,
-			preserveHeaders: hostConfig.PreserveHeaders,
-			accessKey:       hostConfig.AccessKey,
-			secretKey:       hostConfig.SecretKey,
-		}
-	}
-
-	return clients
-
-}

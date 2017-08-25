@@ -37,8 +37,8 @@ See `$GOPATH/src/github.com/alexandres/poormanscdn/config.json.example` for an e
 All configuration is done by editing the `config.json` file. Options:
 
 - `Listen`: interface and port to listen on - examples: `127.0.0.1:8080` to listen on localhost on port 8080 or `:https` to listen on all interfaces on port 443
-- `DefaultAccessKey`: S3 Access Key (alternatively leave this blank and use `AWS_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
-- `DefaultSecretKey`: S3 Secret Key (alternatively leave this blank and use `AWS_SECRET_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
+- `AccessKey`: Global S3 Access Key (alternatively leave this blank and use `AWS_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
+- `SecretKey`: Global S3 Secret Key (alternatively leave this blank and use `AWS_SECRET_ACCESS_KEY` ENV variable). Override at the `Hosts` level if needed.
 - `Secret`: the secret key used to sign download URLs and purge requests - example: use `$ hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom` to generate 128 bit key. (alternatively leave this blank and use `PCDN_SECRET` ENV variable)
 - `TmpDir`: where to store temporary files, need not persist between executions
 - `CacheDir`: where to store cached files, should persist between executions to avoid emptying the cache
@@ -46,13 +46,14 @@ All configuration is done by editing the `config.json` file. Options:
 - `DatabaseDir`: where to store database files, should persist between executions to maintain last-downloaded times for cached files
 - `TLSCertificateDir`: where to store Let's Encrypt certificates (if blank, will disable https:// on all hosts). See *Using HTTPS* below.
 - `FreeSpaceBatchSizeInBytes`: when the cache is full, free this many bytes, should be at least as large as the largest file you'll store in your cache - example: 1000000000 to free 1GB
-- `SigRequired`: if true, only allows downloads using signed URLs
 - `GzipContentTypes`: gzip all cached files which had these Content-Type headers when downloaded from S3. 
-- `DefaultPreserveHeaders`: these headers when returned from S3 will be passed through to the client and saved in the cache to be replayed in future requests.
+- `PreserveHeaders`: these headers when returned from S3 will be passed through to the client and saved in the cache to be replayed in future requests. Override at the `Hosts` level if needed.
 - `Hosts`: dictionary of virtual hosts (see *Virtual Hosts* below), in the format:
-	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseDefaultAccessKey", "SecretKey": "leaveblanktouseDefaultSecretKey", "PreserveHeaders": ["Cache-Control"] }`
+	`"domainoripaddress": { "Bucket": "s3bucket", "Path": "base path within bucket", "AccessKey": "leaveblanktouseAccessKey", "SecretKey": "leaveblanktouseSecretKey", "PreserveHeaders": ["Cache-Control"], "SigRequired": false }`
    
-   Note: Usage of HTTPS requires a valid domain name.
+   Notes: 
+   - Usage of HTTPS requires a valid domain name. 
+   - If not set, `SigRequired` defaults to false.
 
 
 ## Usage
@@ -77,9 +78,10 @@ You can invalidate cached files in 2 ways:
 
 ### Virtual Hosts
 
-A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have three domains `myblog.com`, `familyblog.com`, and `carrentals.com`, with:
+A single poormanscdn server can serve multiple domains through virtual hosts. For example, if you have four domains `myblog.com`, `familyblog.com`, `secrets.familyblog.com`, and `carrentals.com`, with:
 
-- `myblog.com` and `familyblog.com` using `DefaultAccessKey`, `DefaultSecretKey`, `DefaultPreserveHeaders` and sharing S3 bucket `blogs` under different paths
+- `myblog.com` and `familyblog.com` using global `AccessKey`, `SecretKey`, `PreserveHeaders` and sharing S3 bucket `blogs` under different paths
+- `secrets.familyblog.com` using similar settings but only allowing signed URLs
 - `carrentals.com` in a separate AWS account and bucket using the root path and only preserving the `ETag` header.
 
 Your `Hosts` configuration would be:
@@ -88,6 +90,7 @@ Your `Hosts` configuration would be:
 "Hosts": {
 	"myblog.com": { "Bucket": "blogs", "Path": "my" },
 	"familyblog.com": { "Bucket": "blogs", "Path": "family" },
+	"secrets.familyblog.com": { "Bucket": "blogs", "Path": "secrets", "SigRequired": true },
 	"carrentals.com": { "Bucket": "carrentals", "AccessKey": "someotherawsaccesskey", "SecretKey": "someotherawssecretkey", "PreserveHeaders": ["ETag"] }
 }
 ```
@@ -104,7 +107,7 @@ That's it! Start poormanscdn and HTTPS should just work. If you have more domain
 
 ### URL Signing
 
-If SigRequired is set to true in your configuration, poormanscdn will only allow downloads with signed URLs. See `client/sign.go` (Go) and `client/python/poormanscdn/__init__.py` (Python) for sample implementations. There is a Go tool in `client/go/pcdn` that allows you to sign URLs from the command line.
+If `SigRequired` is set to true in your configuration, poormanscdn will only allow downloads with signed URLs. See `client/sign.go` (Go) and `client/python/poormanscdn/__init__.py` (Python) for sample implementations. There is a Go tool in `client/go/pcdn` that allows you to sign URLs from the command line.
 
 **Dowload URL signing using Python**
 

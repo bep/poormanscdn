@@ -43,9 +43,9 @@ type Configuration struct {
 	Listen                    string
 	GzipContentTypes          []string
 	Hosts                     map[string]Host
-	DefaultAccessKey          string
-	DefaultSecretKey          string
-	DefaultPreserveHeaders    []string
+	AccessKey                 string
+	SecretKey                 string
+	PreserveHeaders           []string
 	TmpDir                    string
 	CacheDir                  string
 	CacheSize                 uint64
@@ -53,7 +53,6 @@ type Configuration struct {
 	TLSCertificateDir         string
 	FreeSpaceBatchSizeInBytes uint64
 	Secret                    string
-	SigRequired               bool
 }
 
 func (c Configuration) hostNames() []string {
@@ -89,6 +88,10 @@ type Host struct {
 	PreserveHeaders []string
 	AccessKey       string
 	SecretKey       string
+
+	SigRequired bool
+
+	storageProvider StorageProvider
 }
 
 func readConfiguration(r io.Reader) (conf Configuration, err error) {
@@ -100,19 +103,19 @@ func readConfiguration(r io.Reader) (conf Configuration, err error) {
 		return
 	}
 
-	if conf.DefaultAccessKey == "" {
+	if conf.AccessKey == "" {
 		// check for AWS keys in environment
 		s3AccessKey := os.Getenv(awsAccessKeyEnv)
 		if s3AccessKey != "" {
-			conf.DefaultAccessKey = s3AccessKey
+			conf.AccessKey = s3AccessKey
 			log.Printf("Using %s from environment var\n", awsAccessKeyEnv)
 		}
 	}
 
-	if conf.DefaultSecretKey == "" {
+	if conf.SecretKey == "" {
 		s3SecretKey := os.Getenv(awsSecretAccessKeyEnv)
 		if s3SecretKey != "" {
-			conf.DefaultSecretKey = s3SecretKey
+			conf.SecretKey = s3SecretKey
 			log.Printf("Using %s from environment var\n", awsSecretAccessKeyEnv)
 		}
 	}
@@ -135,7 +138,7 @@ func readConfiguration(r io.Reader) (conf Configuration, err error) {
 
 	for name, host := range conf.Hosts {
 		if host.PreserveHeaders == nil {
-			host.PreserveHeaders = conf.DefaultPreserveHeaders
+			host.PreserveHeaders = conf.PreserveHeaders
 		}
 		preserveHeaders := make([]string, len(host.PreserveHeaders))
 		copy(preserveHeaders, host.PreserveHeaders)
@@ -164,11 +167,29 @@ func readConfiguration(r io.Reader) (conf Configuration, err error) {
 		host.PreserveHeaders = preserveHeaders
 
 		if host.AccessKey == "" {
-			host.AccessKey = conf.DefaultAccessKey
+			host.AccessKey = conf.AccessKey
+			if host.AccessKey == "" {
+				err = errors.New(fmt.Sprintf("no AccessKey found for host %s", name))
+				return
+			}
 		}
 		if host.SecretKey == "" {
-			host.SecretKey = conf.DefaultSecretKey
+			host.SecretKey = conf.SecretKey
+			if host.SecretKey == "" {
+				err = errors.New(fmt.Sprintf("no SecretKey found for host %s", name))
+				return
+			}
 		}
+
+		storageProvider := S3Client{
+			bucket:          host.Bucket,
+			path:            host.Path,
+			preserveHeaders: host.PreserveHeaders,
+			accessKey:       host.AccessKey,
+			secretKey:       host.SecretKey,
+		}
+		host.storageProvider = storageProvider
+
 		conf.Hosts[name] = host
 	}
 	return

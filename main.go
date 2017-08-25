@@ -54,10 +54,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	storageProviders := GetS3Clients(config)
-	if err != nil {
-		log.Fatal(err)
-	}
+
 	cache, err := GetCache(config, db)
 	if err != nil {
 		log.Fatal(err)
@@ -69,7 +66,7 @@ func main() {
 	h := http.NewServeMux()
 
 	cacheHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		status, err := CacheHandler(config, cache, storageProviders, w, r)
+		status, err := CacheHandler(config, cache, w, r)
 		contentLength := getContentLength(w)
 		if status != http.StatusOK {
 			if contentLength == 0 { // response not yet sent, ok to write error to response

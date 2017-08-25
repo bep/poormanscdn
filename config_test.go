@@ -46,8 +46,8 @@ func doTestGetConfig(t *testing.T, secretsFromEnv bool) {
 
 	if !secretsFromEnv {
 		secrets = `
-"DefaultAccessKey":  "your3accesskey",
-"DefaultSecretKey":  "your3secret",
+"AccessKey":  "your3accesskey",
+"SecretKey":  "your3secret",
 "Secret": "yourSecretKey",
 `
 	}
@@ -62,7 +62,6 @@ func doTestGetConfig(t *testing.T, secretsFromEnv bool) {
 	"DatabaseDir": "db",
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"TLSCertificateDir": "cert",
-	"SigRequired":	false,
 	"Hosts": {
 		"example.org": { "Bucket": "firstbucket", "Path": "site1" },
 		"example.com": { "Bucket": "firstbucket", "Path": "site2" },
@@ -84,12 +83,12 @@ func doTestGetConfig(t *testing.T, secretsFromEnv bool) {
 	assert.Equal("cert", conf.TLSCertificateDir)
 
 	if secretsFromEnv {
-		assert.Equal("awsAccessEnv", conf.DefaultAccessKey)
-		assert.Equal("awsSecretEnv", conf.DefaultSecretKey)
+		assert.Equal("awsAccessEnv", conf.AccessKey)
+		assert.Equal("awsSecretEnv", conf.SecretKey)
 		assert.Equal("pcdnSecretEnv", conf.Secret)
 	} else {
-		assert.Equal("your3accesskey", conf.DefaultAccessKey)
-		assert.Equal("your3secret", conf.DefaultSecretKey)
+		assert.Equal("your3accesskey", conf.AccessKey)
+		assert.Equal("your3secret", conf.SecretKey)
 		assert.Equal("yourSecretKey", conf.Secret)
 	}
 
@@ -97,12 +96,12 @@ func doTestGetConfig(t *testing.T, secretsFromEnv bool) {
 
 	firstHost := conf.Hosts["example.org"]
 	// Should inherit the defaults
-	assert.Equal(conf.DefaultAccessKey, firstHost.AccessKey)
-	assert.Equal(conf.DefaultSecretKey, firstHost.SecretKey)
+	assert.Equal(conf.AccessKey, firstHost.AccessKey)
+	assert.Equal(conf.SecretKey, firstHost.SecretKey)
 
 	lastHost := conf.Hosts["example.net"]
 	assert.Equal("example.net.access", lastHost.AccessKey)
-	assert.Equal(conf.DefaultSecretKey, lastHost.SecretKey)
+	assert.Equal(conf.SecretKey, lastHost.SecretKey)
 
 	assert.Equal([]string{"example.com", "example.net", "example.org"}, conf.hostNames())
 

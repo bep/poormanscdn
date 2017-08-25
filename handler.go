@@ -32,18 +32,19 @@ import (
 	"github.com/alexandres/poormanscdn/client"
 )
 
-func CacheHandler(config Configuration, cache *Cache, storageProviders map[string]StorageProvider, w http.ResponseWriter, r *http.Request) (status int, err error) {
+func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (status int, err error) {
 	urlPath := client.TrimPath(r.URL.Path)
 	q := r.URL.Query()
 
-	host, _, err := net.SplitHostPort(r.Host)
+	hostname, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		host = r.Host // c.req.Host not host:port, likely only host
+		hostname = r.Host // c.req.Host not host:port, likely only host
 	}
-	storage, found := storageProviders[host]
+	host, found := config.Hosts[hostname]
 	if !found {
 		return http.StatusBadRequest, errors.New("invalid host")
 	}
+	storage := host.storageProvider
 
 	lastModifiedAtInt := int64(0) // no cached file will have timestamp <= 0
 
@@ -62,9 +63,9 @@ func CacheHandler(config Configuration, cache *Cache, storageProviders map[strin
 	//     - modified threatens to purge cache or
 	//     - SigRequired is true
 	//     - DELETE request
-	if lastModifiedAtInt > 0 || config.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
+	if lastModifiedAtInt > 0 || host.SigRequired || r.Method == http.MethodDelete || urlPath == "cacheStats" {
 		err = client.VerifySig(q.Get("sig"), config.Secret, r.Method, urlPath, lastModifiedAt, q.Get("expires"), q.Get("host"),
-			q.Get("domain"), host, r.Referer())
+			q.Get("domain"), hostname, r.Referer())
 		if err != nil {
 			return http.StatusForbidden, errors.New("bad sig")
 		}
@@ -72,9 +73,9 @@ func CacheHandler(config Configuration, cache *Cache, storageProviders map[strin
 
 	if r.Method == http.MethodDelete {
 		if urlPath == "" {
-			_, err = cache.DeleteAll(host)
+			_, err = cache.DeleteAll(hostname)
 		} else {
-			_, err = cache.Delete(host, urlPath)
+			_, err = cache.Delete(hostname, urlPath)
 		}
 		if err != nil {
 			return http.StatusInternalServerError, errors.New("failed to delete")
@@ -84,7 +85,7 @@ func CacheHandler(config Configuration, cache *Cache, storageProviders map[strin
 		if r.URL.Path[len(r.URL.Path)-1] == '/' {
 			urlPath += "/index.html" // support static websites
 		}
-		cacheError := cache.Read(host, storage, urlPath, lastModifiedAtTime, cacheClient)
+		cacheError := cache.Read(hostname, storage, urlPath, lastModifiedAtTime, cacheClient)
 		if cacheError != nil {
 			return cacheError.status, cacheError
 		}
