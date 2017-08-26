@@ -34,12 +34,12 @@ func TestSign(t *testing.T) {
 	modified := time.Unix(1424, 0)
 	expires := time.Unix(3424, 0)
 	p := SigParams{
-		Method:   method,
-		Path:     "somepath",
-		UserHost: "someuser",
-		Domain:   "somedomain",
-		Modified: modified,
-		Expires:  expires,
+		Method:      method,
+		Path:        "somepath",
+		UserHost:    "someuser",
+		RefererHost: "somedomain",
+		Modified:    modified,
+		Expires:     expires,
 	}
 	secret := "dummy"
 	signedUrl, err := GetSignedUrl(secret, "http://dummyurl.com/", p)

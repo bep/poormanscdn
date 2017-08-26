@@ -58,7 +58,11 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 	//     - DELETE request
 	//     - view cacheStats
 	if !modifiedAt.Equal(client.ZeroTime()) || host.SigRequired || r.Method == http.MethodDelete || urlPath == CacheStatsPath {
-		sigParams, err := client.ParseAndAuthenticateSignedUrl(config.Secret, r.Method, r.URL.String())
+		urlString, err := buildUrlString(r)
+		if err != nil {
+			return http.StatusBadRequest, err
+		}
+		sigParams, err := client.ParseAndAuthenticateSignedUrl(config.Secret, r.Method, urlString)
 		if err != nil {
 			return http.StatusForbidden, err
 		}
@@ -72,9 +76,9 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 			return http.StatusForbidden, errors.New("bad userhost")
 		}
 
-		if sigParams.Domain != "" {
+		if sigParams.RefererHost != "" {
 			parsedRefererUrl, err := url.Parse(r.Referer())
-			if err != nil || parsedRefererUrl.Host != sigParams.Domain {
+			if err != nil || parsedRefererUrl.Host != sigParams.RefererHost {
 				return http.StatusForbidden, errors.New("bad referer")
 			}
 		}
@@ -100,4 +104,15 @@ func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *
 		}
 	}
 	return http.StatusOK, nil
+}
+
+func buildUrlString(r *http.Request) (string, error) {
+	if r.URL.IsAbs() {
+		return r.URL.String(), nil
+	}
+	parsedUrl, err := url.Parse("https://" + r.Host + r.URL.String()) // TODO: get scheme somehow. doesn't matter here because signing doesn't use scheme
+	if err != nil {
+		return "", err
+	}
+	return parsedUrl.String(), err
 }

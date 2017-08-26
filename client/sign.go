@@ -33,11 +33,11 @@ import (
 )
 
 const (
-	UserHostParam = "host"
-	DomainParam   = "domain"
-	ModifiedParam = "modified"
-	ExpiresParam  = "expires"
-	SigParam      = "sig"
+	UserHostParam    = "host"
+	RefererHostParam = "domain"
+	ModifiedParam    = "modified"
+	ExpiresParam     = "expires"
+	SigParam         = "sig"
 )
 
 func hashString(s string) string {
@@ -50,16 +50,17 @@ func TrimPath(path string) string {
 }
 
 type SigParams struct {
-	Method   string
-	Path     string
-	Modified time.Time
-	Expires  time.Time
-	Domain   string
-	UserHost string
+	Host        string
+	Method      string
+	Path        string
+	Modified    time.Time
+	Expires     time.Time
+	RefererHost string
+	UserHost    string
 }
 
 func Sign(secret string, p SigParams) string {
-	toSign := strings.Join([]string{p.Method, p.Path, timeToStr(p.Modified), timeToStr(p.Expires), p.UserHost, p.Domain}, "&")
+	toSign := strings.Join([]string{p.Host, p.Method, p.Path, timeToStr(p.Modified), timeToStr(p.Expires), p.UserHost, p.RefererHost}, "&")
 	return hashString(secret + hashString(toSign))
 }
 
@@ -72,9 +73,10 @@ func GetSignedUrl(secret string, cdnUrl string, p SigParams) (signedUrl string, 
 	if err != nil {
 		return
 	}
+	p.Host = parsedBaseUrl.Host
 	q := parsedBaseUrl.Query()
 	q.Set(UserHostParam, p.UserHost)
-	q.Set(DomainParam, p.Domain)
+	q.Set(RefererHostParam, p.RefererHost)
 	q.Set(ModifiedParam, timeToStr(p.Modified))
 	q.Set(ExpiresParam, timeToStr(p.Expires))
 	q.Set(SigParam, Sign(secret, p))
@@ -124,12 +126,13 @@ func ParseAndAuthenticateSignedUrl(secret string, method string, signedUrl strin
 	}
 
 	sigParams = SigParams{
-		Method:   method,
-		Path:     TrimPath(parsedUrl.Path),
-		Modified: modifiedAt,
-		Expires:  expiresAt,
-		UserHost: q.Get(UserHostParam),
-		Domain:   q.Get(DomainParam),
+		Host:        parsedUrl.Host,
+		Method:      method,
+		Path:        TrimPath(parsedUrl.Path),
+		Modified:    modifiedAt,
+		Expires:     expiresAt,
+		UserHost:    q.Get(UserHostParam),
+		RefererHost: q.Get(RefererHostParam),
 	}
 	sig := Sign(secret, sigParams)
 	if sig != q.Get(SigParam) {

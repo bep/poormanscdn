@@ -31,14 +31,14 @@ import (
 	"github.com/alexandres/poormanscdn/client"
 )
 
-var path, cdnUrl, method, domain, host, secret string
+var path, cdnUrl, method, refererHost, userHost, secret string
 var modified, expires int64
 
 func init() {
 	flag.StringVar(&cdnUrl, "cdnurl", "", "cdnurl")
 	flag.StringVar(&method, "method", "GET", "method")
-	flag.StringVar(&domain, "domain", "", "domain")
-	flag.StringVar(&host, "host", "", "host")
+	flag.StringVar(&refererHost, "refererhost", "", "restrict referer host")
+	flag.StringVar(&userHost, "userhost", "", "restrict user host")
 	flag.Int64Var(&modified, "modified", 0, "modified")
 	flag.Int64Var(&expires, "expires", 0, "expires")
 	flag.StringVar(&path, "path", "", "path")
@@ -53,12 +53,12 @@ func main() {
 	lastModifiedAt := time.Unix(modified, 0)
 	expiresAt := time.Unix(expires, 0)
 	p := client.SigParams{
-		Method:   method,
-		Path:     client.TrimPath(path),
-		UserHost: host,
-		Domain:   domain,
-		Modified: lastModifiedAt,
-		Expires:  expiresAt,
+		Method:      method,
+		Path:        client.TrimPath(path),
+		UserHost:    userHost,
+		RefererHost: refererHost,
+		Modified:    lastModifiedAt,
+		Expires:     expiresAt,
 	}
 	url, err := client.GetSignedUrl(secret, cdnUrl, p)
 	if err != nil {

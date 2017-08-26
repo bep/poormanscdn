@@ -109,6 +109,8 @@ That's it! Start poormanscdn and HTTPS should just work. If you have more domain
 
 If `SigRequired` is set to true in your configuration, poormanscdn will only allow downloads with signed URLs. See `client/sign.go` (Go) and `client/python/poormanscdn/__init__.py` (Python) for sample implementations. There is a Go tool in `client/go/pcdn` that allows you to sign URLs from the command line.
 
+Note: signed URLs are Virtual Host specific. The URLs below would only be valid for Virtual Host `myvirtualhostsdomain.com`.
+
 **Dowload URL signing using Python**
 
 ```python
@@ -117,9 +119,9 @@ import datetime
 
 last_modified_at = datetime.datetime.now() - datetime.timedelta(days=7) # file changes weekly
 expires_at =  datetime.datetime.now() + datetime.timedelta(hours=1) # signed URL expires in 1 hour
-domain = "mysite.com" # only allow download if Referer header is from mysite.com, set to "" to allow from any Referer
-host = "192.168.1.100" # only allow download from this IP address, set to "" to allow from any IP
-poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "GET", "/some/file.ext", last_modified_at, expires_at, restrict_domain=domain, restrict_host=host)
+referer_host = "mysite.com" # only allow download if Referer header is from mysite.com, set to "" to allow from any Referer
+user_host = "192.168.1.100" # only allow download from this IP address, set to "" to allow from any IP
+poormanscdn.get_signed_url("mysecretkey", "http://myvirtualhostsdomain.com", "GET", "/some/file.ext", last_modified_at, expires_at, restrict_referer_host=referer_host, restrict_user_host=user_host)
 ```
 
 **DELETE URL signing using Python**
@@ -129,7 +131,7 @@ import poormanscdn
 
 last_modified_at = None
 expires_at = None # never expire
-poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "DELETE", "/", last_modified_at, expires_at)
+poormanscdn.get_signed_url("mysecretkey", "http://myvirtualhostsdomain.com", "DELETE", "/", last_modified_at, expires_at)
 ```
 
 As this URL never expires, you can add this to your commit hook to clear the cache after your files
@@ -144,7 +146,7 @@ import poormanscdn
 
 last_modified_at = None
 expires_at = None # never expire
-poormanscdn.get_signed_url("mysecretkey", "http://mycdnhost.com", "GET", "/cacheStats", last_modified_at, expires_at)
+poormanscdn.get_signed_url("mysecretkey", "http://myvirtualhostsdomain.com", "GET", "/cacheStats", last_modified_at, expires_at)
 ```
 
 ## TODO
