@@ -58,7 +58,6 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 		return 0, &StorageProviderError{http.StatusInternalServerError, err}
 	}
 	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
-	req.Header.Add("Accept-Encoding", "identity") // we don't want gzipped responsed here so that we can send the Content-Length THEN stream the file, otherwise user won't have progress report
 
 	s3.Sign(req, s3.Keys{
 		AccessKey: c.accessKey,
@@ -74,6 +73,13 @@ func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storagePro
 		err = errors.New(fmt.Sprintf("status code: %d", res.StatusCode))
 		return 0, &StorageProviderError{res.StatusCode, err}
 	}
+
+	// as per https://golang.org/pkg/net/http/#Response, Content-Length has been
+	// deleted from res.Header if file was gzipped on S3 and res.Body below
+	// is decompressed and Content-Length  will not be preserved
+	// nor passed through to the client. Future requests served from the cache will
+	// support both clients that do or do not support compression and will handle
+	// Content-Length automatically.
 
 	w.PreserveAndWriteHeaders(res.Header)
 	bytesRead, err = w.Write(res.Body)
