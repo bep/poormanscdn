@@ -1,13 +1,19 @@
 {
-	"Listen": 		":8080",
-	"S3Bucket":     "yours3bucketname",
-	"S3AccessKey":  "yours3accesskey",
-	"S3SecretKey":  "yours3secrent",
+	"Listen": 		":https",
+	"AccessKey":  "yours3accesskey",
+	"SecretKey":  "yours3secret",
+	"TLSCertificateDir": "cert",
 	"TmpDir":       "tmp", 
 	"CacheDir":     "cache",
 	"CacheSize":    40000000000,
 	"DatabaseDir": "db",
 	"FreeSpaceBatchSizeInBytes": 2000000000,
 	"Secret": "",
-	"SigRequired":	true
+	"PreserveHeaders": ["Cache-Control", "ETag"],
+	"GzipContentTypes": ["text/html", "application/x-javascript", "text/css", "application/javascript", "text/javascript", "text/plain", "text/xml", "application/json", "application/vnd.ms-fontobject", "application/x-font-opentype", "application/x-font-truetype", "application/x-font-ttf", "application/xml", "font/eot", "font/opentype", "font/otf", "image/svg+xml", "image/vnd.microsoft.icon"],
+	"Hosts": {
+		"example.org": { "Bucket": "yourS3bucketname", "Path": "site1" },
+		"example.com": { "Bucket": "yourS3bucketname", "Path": "site2" },
+		"secureserver.com": { "Bucket": "someothers3bucketname", "SigRequired": true }
+	}
 }

@@ -24,38 +24,95 @@ package main
 
 import (
 	"errors"
+	"net"
 	"net/http"
-	"strconv"
-	"strings"
+	"net/url"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
 )
 
 func CacheHandler(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (status int, err error) {
-	path := client.TrimPath(r.URL.Path)
+	urlPath := client.TrimPath(r.URL.Path)
 	q := r.URL.Query()
 
-	lastModifiedAt := q.Get("modified")
-	lastModifiedAtInt, err := strconv.ParseInt(lastModifiedAt, 10, 64)
+	hostname, _, err := net.SplitHostPort(r.Host)
 	if err != nil {
-		return http.StatusBadRequest, errors.New("bad modified")
+		hostname = r.Host // c.req.Host not host:port, likely only host
 	}
-	lastModifiedAtTime := time.Unix(lastModifiedAtInt, 0)
+	host, found := config.Hosts[hostname]
+	if !found {
+		return http.StatusBadRequest, errors.New("invalid host")
+	}
+	storage := host.storageProvider
 
-	if config.SigRequired {
-		host := strings.Split(r.RemoteAddr, ":")[0]
-		err = client.VerifySig(q.Get("sig"), config.Secret, path, lastModifiedAt, q.Get("expires"), q.Get("host"),
-			q.Get("domain"), host, r.Referer())
+	// if ?modified=... not in query this will default to time.Unix(0, 0)
+	modifiedAt, err := client.UnixTimeStrToTime(q.Get(client.ModifiedParam))
+	if err != nil {
+		return http.StatusBadRequest, errors.New("bad modified date")
+	}
+
+	// require valid signature if
+	//     - modified query parameter threatens to purge cache (modified > epoch) or
+	//     - SigRequired is true
+	//     - DELETE request
+	//     - view cacheStats
+	if !modifiedAt.Equal(client.ZeroTime()) || host.SigRequired || r.Method == http.MethodDelete || urlPath == CacheStatsPath {
+		urlString, err := buildUrlString(r)
 		if err != nil {
-			return http.StatusForbidden, errors.New("bad sig")
+			return http.StatusBadRequest, err
+		}
+		sigParams, err := client.ParseAndAuthenticateSignedUrl(config.Secret, r.Method, urlString)
+		if err != nil {
+			return http.StatusForbidden, err
+		}
+
+		// if expiration is not 0 and earlier than now fail
+		if !sigParams.Expires.Equal(client.ZeroTime()) && sigParams.Expires.Before(time.Now()) {
+			return http.StatusForbidden, errors.New("url expired")
+		}
+
+		if sigParams.UserHost != "" && sigParams.UserHost != r.RemoteAddr {
+			return http.StatusForbidden, errors.New("bad userhost")
+		}
+
+		if sigParams.RefererHost != "" {
+			parsedRefererUrl, err := url.Parse(r.Referer())
+			if err != nil || parsedRefererUrl.Host != sigParams.RefererHost {
+				return http.StatusForbidden, errors.New("bad referer")
+			}
 		}
 	}
 
-	cacheClient := CacheClient{w, r}
-	cacheError := cache.Read(path, lastModifiedAtTime, cacheClient)
-	if cacheError != nil {
-		return cacheError.status, cacheError
+	if r.Method == http.MethodDelete {
+		if urlPath == "" {
+			_, err = cache.DeleteAll(hostname)
+		} else {
+			_, err = cache.Delete(hostname, urlPath)
+		}
+		if err != nil {
+			return http.StatusInternalServerError, errors.New("failed to delete")
+		}
+	} else {
+		cacheClient := CacheClient{w, r}
+		if r.URL.Path[len(r.URL.Path)-1] == '/' {
+			urlPath += "/index.html" // support static websites
+		}
+		cacheError := cache.Read(hostname, storage, urlPath, modifiedAt, cacheClient)
+		if cacheError != nil {
+			return cacheError.status, cacheError
+		}
 	}
 	return http.StatusOK, nil
+}
+
+func buildUrlString(r *http.Request) (string, error) {
+	if r.URL.IsAbs() {
+		return r.URL.String(), nil
+	}
+	parsedUrl, err := url.Parse("https://" + r.Host + r.URL.String()) // TODO: get scheme somehow. doesn't matter here because signing doesn't use scheme
+	if err != nil {
+		return "", err
+	}
+	return parsedUrl.String(), err
 }

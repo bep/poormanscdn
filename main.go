@@ -23,13 +23,17 @@
 package main
 
 import (
-	"errors"
+	"crypto/tls"
+	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/NYTimes/gziphandler"
+	"golang.org/x/crypto/acme/autocert"
 )
 
 func httpError(w http.ResponseWriter, err error, code int) {
@@ -38,7 +42,10 @@ func httpError(w http.ResponseWriter, err error, code int) {
 }
 
 func main() {
-	config, err := GetConfiguration("config.json")
+	checkFdlimit()
+	configFile := flag.String("config", "config.json", "path to config file")
+	flag.Parse()
+	config, err := getConfiguration(*configFile)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -47,11 +54,8 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	storageClient := GetS3Client(config)
-	if err != nil {
-		log.Fatal(err)
-	}
-	cache, err := GetCache(config, db, storageClient)
+
+	cache, err := GetCache(config, db)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -59,35 +63,50 @@ func main() {
 	go cache.FreeSpaceWatchdog()
 	cache.bytesUsedChan <- 0 // just to free space if needed on startup
 
-	http.HandleFunc("/robots.txt", makeHandler(
-		config,
-		cache,
-		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
-			fmt.Fprint(w, "User-agent: *\nDisallow: /")
-			return http.StatusOK, nil
-		}))
-	http.HandleFunc("/favicon.ico", makeHandler(
-		config,
-		cache,
-		func(config Configuration, cache *Cache, w http.ResponseWriter, r *http.Request) (int, error) {
-			return http.StatusNotFound, errors.New("not found")
-		}))
+	h := http.NewServeMux()
 
-	http.HandleFunc("/", makeHandler(config, cache, CacheHandler))
-	log.Fatal(http.ListenAndServe(config.Listen, nil))
-}
-
-func makeHandler(config Configuration, cache *Cache, handler func(Configuration, *Cache, http.ResponseWriter, *http.Request) (int, error)) func(http.ResponseWriter, *http.Request) {
-	return func(w http.ResponseWriter, r *http.Request) {
-		status, err := handler(config, cache, w, r)
+	cacheHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		status, err := CacheHandler(config, cache, w, r)
+		contentLength := getContentLength(w)
 		if status != http.StatusOK {
-			if w.Header().Get("Content-Length") == "" { // response not yet sent, ok to write to repsonse
-				WriteResponseError(os.Stderr, w, r, status, err)
-			} else if status == http.StatusInternalServerError {
-				WriteError(os.Stderr, r, time.Now(), status, err) // don't write to response
+			if contentLength == 0 { // response not yet sent, ok to write error to response
+				http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)
 			}
+			WriteError(os.Stderr, r, time.Now(), status, err) // log all errors to stderr
 		}
-		WriteCombinedLog(os.Stdout, r, *r.URL, time.Now(), status, getContentLength(w))
+		WriteCombinedLog(os.Stdout, r, *r.URL, time.Now(), status, contentLength)
+	})
+
+	gzipHandler, err := gziphandler.GzipHandlerWithOpts(gziphandler.ContentTypes(config.GzipContentTypes))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	h.Handle("/", gzipHandler(cacheHandler))
+
+	needsTLS, err := config.isTLSConfigured()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if needsTLS {
+		m := autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(config.hostNames()...),
+			Cache:      autocert.DirCache(config.TLSCertificateDir),
+		}
+		s := &http.Server{
+			Addr:      config.Listen,
+			TLSConfig: &tls.Config{GetCertificate: m.GetCertificate},
+			Handler:   h,
+		}
+		log.Fatal(s.ListenAndServeTLS("", ""))
+	} else {
+		s := &http.Server{
+			Addr:    config.Listen,
+			Handler: h,
+		}
+		log.Fatal(s.ListenAndServe())
 	}
 }
 

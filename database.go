@@ -23,30 +23,79 @@
 package main
 
 import (
-	"github.com/syndtr/goleveldb/leveldb"
+	"bytes"
+	"encoding/gob"
+	pathLib "path"
 	"sort"
+	"strings"
 	"time"
+
+	"github.com/syndtr/goleveldb/leveldb"
 )
+
+const (
+	accessTimeNamespace = "accessed"
+	headersNamepace     = "headers"
+)
+
+func namespacedPath(namespace, path string) string {
+	return pathLib.Join(namespace, path)
+}
 
 func GetDatabase(path string) (db *leveldb.DB, err error) {
 	return leveldb.OpenFile(path, nil)
 }
 
-func PutFile(db *leveldb.DB, path string) (err error) {
+func TouchFileAccessTime(db *leveldb.DB, path string) (err error) {
 	timeBinary, err := time.Now().MarshalBinary()
 	if err != nil {
 		return
 	}
-	err = db.Put([]byte(path), timeBinary, nil)
+	err = db.Put([]byte(namespacedPath(accessTimeNamespace, path)), timeBinary, nil)
 	return
 }
 
-func HasFile(db *leveldb.DB, path string) (bool, error) {
-	return db.Has([]byte(path), nil)
+func PutHeaders(db *leveldb.DB, path string, headers map[string]string) (err error) {
+	var headerBuf bytes.Buffer
+	enc := gob.NewEncoder(&headerBuf)
+	err = enc.Encode(headers)
+	if err != nil {
+		return
+	}
+	err = db.Put([]byte(namespacedPath(headersNamepace, path)), headerBuf.Bytes(), nil)
+	return
+}
+
+func GetHeaders(db *leveldb.DB, path string) (headers map[string]string, err error) {
+	headerBytes, err := db.Get([]byte(namespacedPath(headersNamepace, path)), nil)
+	headerBuf := bytes.NewBuffer(headerBytes)
+	if err != nil {
+		return
+	}
+	dec := gob.NewDecoder(headerBuf)
+	err = dec.Decode(&headers)
+	return
+}
+
+func HasFile(db *leveldb.DB, path string) (has bool, err error) {
+	hasAccessTime, err := db.Has([]byte(namespacedPath(accessTimeNamespace, path)), nil)
+	if err != nil {
+		return
+	}
+	hasHeaders, err := db.Has([]byte(namespacedPath(headersNamepace, path)), nil)
+	if err != nil {
+		return
+	}
+	has = hasAccessTime && hasHeaders
+	return
 }
 
 func DeleteFile(db *leveldb.DB, path string) (err error) {
-	err = db.Delete([]byte(path), nil)
+	err = db.Delete([]byte(namespacedPath(accessTimeNamespace, path)), nil)
+	if err != nil {
+		return
+	}
+	err = db.Delete([]byte(namespacedPath(headersNamepace, path)), nil)
 	return
 }
 
@@ -69,14 +118,18 @@ func ListPathsByModificationTime(db *leveldb.DB) (paths []string, err error) {
 	defer iter.Release()
 	for iter.Next() {
 		k := iter.Key()
-		v := iter.Value()
 		path := string(k[:])
+		if !strings.HasPrefix(path, accessTimeNamespace) {
+			continue
+		}
+		v := iter.Value()
 		lastModifiedAt := time.Now()
 		err := lastModifiedAt.UnmarshalBinary(v)
 		if err != nil {
 			return nil, err
 		}
-		pathModified = append(pathModified, PathModified{path, lastModifiedAt})
+		pathStrippedOfNamespace := strings.TrimPrefix(path, accessTimeNamespace+"/")
+		pathModified = append(pathModified, PathModified{pathStrippedOfNamespace, lastModifiedAt})
 	}
 	if err != nil {
 		return

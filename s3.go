@@ -25,32 +25,40 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/kr/s3"
-	"io"
 	"net/http"
 	"net/url"
+	"path"
 	"time"
+
+	"github.com/kr/s3"
 )
 
 type S3Client struct {
-	bucket    string
-	accessKey string
-	secretKey string
+	bucket          string
+	path            string
+	preserveHeaders []string
+	accessKey       string
+	secretKey       string
 }
 
-func (c S3Client) buildS3Url(path string) string {
+func (c S3Client) buildS3Url(p string) string {
 	url, _ := url.Parse("http://" + c.bucket + ".s3.amazonaws.com/")
-	url.Path = path
+	if c.path != "" {
+		p = path.Join(c.path, p)
+	}
+	url.Path = p
+
 	return url.String()
 }
 
-func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
+func (c S3Client) Read(path string, w *CacheWriter) (bytesRead int64, storageProviderErr *StorageProviderError) {
 	url := c.buildS3Url(path)
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return &StorageProviderError{http.StatusInternalServerError, err}
+		return 0, &StorageProviderError{http.StatusInternalServerError, err}
 	}
 	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
+
 	s3.Sign(req, s3.Keys{
 		AccessKey: c.accessKey,
 		SecretKey: c.secretKey,
@@ -58,25 +66,29 @@ func (c S3Client) Read(path string, w *CacheWriter) *StorageProviderError {
 	client := http.DefaultClient
 	res, err := client.Do(req)
 	if err != nil {
-		return &StorageProviderError{http.StatusServiceUnavailable, err}
+		return 0, &StorageProviderError{http.StatusServiceUnavailable, err}
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
 		err = errors.New(fmt.Sprintf("status code: %d", res.StatusCode))
-		return &StorageProviderError{res.StatusCode, err}
+		return 0, &StorageProviderError{res.StatusCode, err}
 	}
-	w.WriteSize(res.ContentLength)
-	_, err = io.Copy(w, res.Body)
+
+	// as per https://golang.org/pkg/net/http/#Response, Content-Length has been
+	// deleted from res.Header if file was gzipped on S3 and res.Body below
+	// is decompressed and Content-Length  will not be preserved
+	// nor passed through to the client. Future requests served from the cache will
+	// support both clients that do or do not support compression and will handle
+	// Content-Length automatically.
+
+	w.PreserveAndWriteHeaders(res.Header)
+	bytesRead, err = w.Write(res.Body)
 	if err != nil {
-		return &StorageProviderError{http.StatusRequestTimeout, err}
+		return 0, &StorageProviderError{http.StatusRequestTimeout, err}
 	}
-	return nil
+	return
 }
 
-func GetS3Client(config Configuration) S3Client {
-	return S3Client{
-		bucket:    config.S3Bucket,
-		accessKey: config.S3AccessKey,
-		secretKey: config.S3SecretKey,
-	}
+func (c S3Client) PreserveHeaders() []string {
+	return c.preserveHeaders
 }

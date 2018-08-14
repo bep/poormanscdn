@@ -29,22 +29,26 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"mime"
 	"net/http"
 	"os"
 	pathLib "path"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/alexandres/poormanscdn/client"
 	"github.com/syndtr/goleveldb/leveldb"
 )
 
+const (
+	CacheStatsPath = "cacheStats"
+)
+
 type StorageProvider interface {
-	Read(path string, w *CacheWriter) *StorageProviderError
-	//Stat(path string) (Stat, error)
+	Read(path string, w *CacheWriter) (bytesRead int64, err *StorageProviderError)
+	PreserveHeaders() []string
 }
 
 type StorageProviderError struct {
@@ -66,7 +70,6 @@ type Stat struct {
 
 type Cache struct {
 	db                        *leveldb.DB
-	storageProvider           StorageProvider
 	cacheDir                  string
 	cacheSize                 uint64
 	tmpDir                    string
@@ -76,6 +79,8 @@ type Cache struct {
 	bytesOut                  uint64
 	bytesIn                   uint64
 	startedAt                 time.Time
+	deleteTimestamp           uint64
+	cacheLock                 *sync.RWMutex
 }
 
 type CacheStats struct {
@@ -87,19 +92,13 @@ type CacheStats struct {
 
 func (c *Cache) getStats() string {
 	cacheStats := CacheStats{
-		c.bytesInUse,
-		c.bytesOut,
-		c.bytesIn,
+		atomic.LoadUint64(&c.bytesInUse),
+		atomic.LoadUint64(&c.bytesOut),
+		atomic.LoadUint64(&c.bytesIn),
 		time.Now().Unix() - c.startedAt.Unix(),
 	}
 	stats, _ := json.Marshal(cacheStats)
 	return string(stats)
-}
-
-type CacheWriter struct {
-	client CacheClient
-	io.Writer
-	bytesWritten int64
 }
 
 type CacheClient struct {
@@ -107,12 +106,47 @@ type CacheClient struct {
 	req *http.Request
 }
 
-func (c *CacheWriter) WriteSize(sizeInBytes int64) {
-	c.client.Header().Set("Content-Length", strconv.FormatInt(sizeInBytes, 10))
-	c.bytesWritten = sizeInBytes
+type CacheWriter struct {
+	client           CacheClient
+	preservedHeaders map[string]string
+	cacheFileWriter  io.Writer
+	bytesWritten     int64
+	storageProvider  StorageProvider
 }
 
-func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheClient) *CacheError {
+func (c *CacheWriter) Write(reader io.Reader) (bytesWritten int64, err error) {
+	multiWriter := io.MultiWriter(c.cacheFileWriter, c.client)
+	bytesWritten, err = io.Copy(multiWriter, reader)
+	return
+}
+
+func (c *CacheWriter) PreserveAndWriteHeaders(storageProviderHeaders http.Header) {
+	c.WriteHeader("Content-Length", storageProviderHeaders.Get("Content-Length")) // this is why we only accepted identity encoding when fetching file from S3
+
+	for headerName, headerVal := range storageProviderHeaders {
+		headerNameLower := strings.ToLower(headerName)
+		firstVal := headerVal[0]
+		c.preservedHeaders[headerNameLower] = firstVal
+		mapHeaderIfPreserved(headerNameLower, c.storageProvider.PreserveHeaders(), func(preservedName string) {
+			c.WriteHeader(preservedName, firstVal)
+		})
+	}
+}
+
+func mapHeaderIfPreserved(headerName string, preservedHeaders []string, callback func(preservedName string)) {
+	for _, preserveHeader := range preservedHeaders {
+		if headerName == strings.ToLower(preserveHeader) { // headerName already lowered
+			callback(preserveHeader)
+			return
+		}
+	}
+}
+
+func (c *CacheWriter) WriteHeader(name, value string) {
+	c.client.Header().Set(name, value)
+}
+
+func (c *Cache) Read(namespace string, storage StorageProvider, path string, lastModifiedAt time.Time, cacheClient CacheClient) *CacheError {
 	pathParts := strings.Split(path, "/")
 	for _, elem := range pathParts {
 		if elem == "." || elem == ".." {
@@ -120,13 +154,14 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 			return &CacheError{http.StatusBadRequest, err}
 		}
 	}
+
 	path = client.TrimPath(path)
 	if len(path) == 0 {
 		err := errors.New("Empty path")
 		return &CacheError{http.StatusBadRequest, err}
 	}
 
-	if path == "cacheStats" {
+	if path == CacheStatsPath {
 		_, err := fmt.Fprint(cacheClient, c.getStats())
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
@@ -134,20 +169,43 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return nil
 	}
 
-	fullPath := c.buildCachePath(path)
+	namespacedPath := pathLib.Join(namespace, path)
+	fullPath := c.buildCachePath(namespacedPath)
 
+	deleteTimestampBefore := atomic.LoadUint64(&c.deleteTimestamp)
+
+	var file *os.File
+	var preservedHeaders map[string]string
+	// need to lock to ensure delete doesn't remove file
+	// between Stat and Open. Once we have file handle can release lock.
+	c.cacheLock.RLock()
 	stat, err := os.Stat(fullPath)
 	if err == nil && !stat.ModTime().Before(lastModifiedAt) {
-		file, err := os.Open(fullPath)
+		file, err = os.Open(fullPath)
 		if err != nil {
+			c.cacheLock.RUnlock()
 			return &CacheError{http.StatusInternalServerError, err}
 		}
 		defer file.Close()
-		err = PutFile(c.db, path)
+		preservedHeaders, err = GetHeaders(c.db, namespacedPath)
+		if err != nil {
+			c.cacheLock.RUnlock() // these multiple Unlocks are ugly. should refactor to only have one
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+	}
+	c.cacheLock.RUnlock()
+
+	if file != nil { // file is in cache
+		err = TouchFileAccessTime(c.db, namespacedPath)
 		if err != nil {
 			return &CacheError{http.StatusInternalServerError, err}
 		}
-		c.bytesOut += uint64(stat.Size())
+		for headerName, headerVal := range preservedHeaders {
+			mapHeaderIfPreserved(headerName, storage.PreserveHeaders(), func(preservedName string) {
+				cacheClient.Header().Set(headerName, headerVal)
+			})
+		}
+		atomic.AddUint64(&c.bytesOut, uint64(stat.Size()))
 		http.ServeContent(cacheClient, cacheClient.req, fullPath, stat.ModTime(), file)
 		return nil
 	}
@@ -168,16 +226,24 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		}
 	}()
 
-	multiWriter := io.MultiWriter(tmp, cacheClient)
-	cacheWriter := CacheWriter{cacheClient, multiWriter, 0}
+	cacheWriter := CacheWriter{
+		client:           cacheClient,
+		preservedHeaders: make(map[string]string),
+		cacheFileWriter:  tmp,
+		storageProvider:  storage,
+	}
 
-	cacheClient.Header().Set("Content-Type", mime.TypeByExtension(pathLib.Ext(fullPath)))
-	cacheClient.Header().Set("Accept-Ranges", "none")
+	// can't accept range requests since we want to cache the full file,
+	// future requests for cache file do support range requests
+	cacheClient.ResponseWriter.Header().Set("Accept-Ranges", "none")
 
-	storageProviderError := c.storageProvider.Read(path, &cacheWriter)
+	sizeInBytes, storageProviderError := storage.Read(path, &cacheWriter)
 	if storageProviderError != nil {
 		return &CacheError{storageProviderError.status, storageProviderError}
 	}
+	atomic.AddUint64(&c.bytesOut, uint64(sizeInBytes))
+	atomic.AddUint64(&c.bytesIn, uint64(sizeInBytes))
+
 	dirPath := pathLib.Dir(fullPath)
 	err = os.MkdirAll(dirPath, 0755)
 	if err != nil {
@@ -194,20 +260,27 @@ func (c *Cache) Read(path string, lastModifiedAt time.Time, cacheClient CacheCli
 		return &CacheError{http.StatusInternalServerError, err}
 	}
 
-	err = os.Rename(tmpName, fullPath)
-	if err != nil {
-		return &CacheError{http.StatusInternalServerError, err}
+	// optimistic locking - we started the read operation to serve the client immediately
+	// but before committing the read file to cache we must check whether a delete call
+	// came in. the file we just read could be stale.
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
+	if deleteTimestampBefore == c.deleteTimestamp {
+		err = TouchFileAccessTime(c.db, namespacedPath)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		err = PutHeaders(c.db, namespacedPath, cacheWriter.preservedHeaders)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		err = os.Rename(tmpName, fullPath)
+		if err != nil {
+			return &CacheError{http.StatusInternalServerError, err}
+		}
+		tmpRemoved = true
+		c.bytesUsedChan <- sizeInBytes
 	}
-	tmpRemoved = true
-
-	err = PutFile(c.db, path)
-	if err != nil {
-		return &CacheError{http.StatusInternalServerError, err}
-	}
-	sizeInBytes := cacheWriter.bytesWritten
-	c.bytesOut += uint64(sizeInBytes)
-	c.bytesIn += uint64(sizeInBytes)
-	c.bytesUsedChan <- sizeInBytes
 	return nil
 }
 
@@ -217,44 +290,84 @@ func (c *Cache) buildCachePath(path string) string {
 
 func (c *Cache) FreeSpaceWatchdog() {
 	for size := range c.bytesUsedChan {
-		c.bytesInUse += uint64(size)
-		if c.bytesInUse > c.cacheSize {
+		atomic.AddUint64(&c.bytesInUse, uint64(size))
+		if atomic.LoadUint64(&c.bytesInUse) > c.cacheSize {
 			c.freeSpace()
 		}
 	}
 }
 
 func (c *Cache) freeSpace() {
+	c.cacheLock.Lock()
+	defer c.cacheLock.Unlock()
 	paths, err := ListPathsByModificationTime(c.db)
 	if err != nil {
 		log.Fatal(err)
 	}
-	bytesLeftToRemove := (c.bytesInUse - c.cacheSize) + c.freeSpaceBatchSizeInBytes
+	bytesLeftToRemove := (atomic.LoadUint64(&c.bytesInUse) - c.cacheSize) + c.freeSpaceBatchSizeInBytes
 	for _, path := range paths {
 		if bytesLeftToRemove <= 0 {
 			break
 		}
-		fullPath := c.buildCachePath(path)
-		stat, err := os.Stat(fullPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				DeleteFile(c.db, path)
-				log.Println(path + "no longer exists, deleting from db")
-			} else {
-				log.Println(err)
-			}
-			continue
-		}
-		size := uint64(stat.Size())
-		err = os.Remove(fullPath)
+		_, err := c.delete(path, false)
 		if err != nil {
 			log.Println("failed to delete " + path)
+			log.Println(err)
 			continue
 		}
-		DeleteFile(c.db, path)
-		c.bytesInUse -= size
-		bytesLeftToRemove -= size
 	}
+}
+
+func (c *Cache) DeleteAll(namespace string) (freedBytes uint64, err error) {
+	paths, err := ListPathsByModificationTime(c.db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	for _, namespacedPath := range paths {
+		if !strings.HasPrefix(namespacedPath, namespace) {
+			continue
+		}
+		path := strings.TrimPrefix(namespacedPath, namespace+"/") // a little redundant but for clarity to avoid calling Delete with empty namespace
+		freedBytesForPath, err := c.Delete(namespace, path)
+		if err != nil {
+			log.Println("failed to delete " + path)
+			log.Println(err)
+			continue
+		}
+		freedBytes += freedBytesForPath
+	}
+	return
+}
+
+func (c *Cache) Delete(namespace, path string) (uint64, error) {
+	return c.delete(pathLib.Join(namespace, path), true)
+}
+
+func (c *Cache) delete(path string, acquireLock bool) (freedBytes uint64, err error) {
+	if acquireLock {
+		c.cacheLock.Lock()
+		defer c.cacheLock.Unlock()
+	}
+	c.deleteTimestamp += 1
+	fullPath := c.buildCachePath(path)
+	stat, err := os.Stat(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			log.Println(path + "no longer exists, deleting from db")
+			DeleteFile(c.db, path)
+			return 0, nil
+		}
+		return
+	}
+	size := uint64(stat.Size())
+	err = os.Remove(fullPath)
+	if err != nil {
+		return
+	}
+	freedBytes = size
+	DeleteFile(c.db, path)
+	atomic.AddUint64(&c.bytesInUse, -freedBytes)
+	return
 }
 
 func (c *Cache) getTmpFile() (file *os.File, err error) {
@@ -262,7 +375,7 @@ func (c *Cache) getTmpFile() (file *os.File, err error) {
 	return
 }
 
-func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvider) (cache *Cache, err error) {
+func GetCache(config Configuration, db *leveldb.DB) (cache *Cache, err error) {
 	stat, err := os.Stat(config.CacheDir)
 	if err != nil {
 		return
@@ -292,9 +405,14 @@ func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvi
 				return err
 			}
 			if !has {
-				PutFile(db, path)
+				log.Printf("file %s in cache but headers missing, deleting\n", path)
+				err = os.Remove(path)
+				if err != nil {
+					return err
+				}
+			} else {
+				bytesInUse += uint64(f.Size())
 			}
-			bytesInUse += uint64(f.Size())
 		}
 		return nil
 	})
@@ -307,7 +425,6 @@ func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvi
 
 	cache = &Cache{
 		db:                        db,
-		storageProvider:           storageProvider,
 		cacheDir:                  config.CacheDir,
 		cacheSize:                 config.CacheSize,
 		tmpDir:                    config.TmpDir,
@@ -315,6 +432,8 @@ func GetCache(config Configuration, db *leveldb.DB, storageProvider StorageProvi
 		bytesUsedChan:             make(chan int64, 1000),
 		freeSpaceBatchSizeInBytes: config.FreeSpaceBatchSizeInBytes,
 		startedAt:                 time.Now(),
+		deleteTimestamp:           0,
+		cacheLock:                 &sync.RWMutex{},
 	}
 	return
 }

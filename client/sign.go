@@ -32,6 +32,14 @@ import (
 	"time"
 )
 
+const (
+	UserHostParam    = "host"
+	RefererHostParam = "domain"
+	ModifiedParam    = "modified"
+	ExpiresParam     = "expires"
+	SigParam         = "sig"
+)
+
 func hashString(s string) string {
 	hash := sha1.Sum([]byte(s))
 	return fmt.Sprintf("%x", hash)
@@ -41,88 +49,94 @@ func TrimPath(path string) string {
 	return strings.Trim(path, " /")
 }
 
-func VerifySig(sig, secret, path, modified, expires, host, domain, userHost, referer string) (err error) {
-	if modified == "" {
-		err = errors.New("missing modified")
-		return
-	}
-	_, err = strconv.ParseInt(modified, 10, 64)
-	if err != nil {
-		err = errors.New("bad modified")
-		return
-	}
-	if sig == "" {
-		err = errors.New("missing sig")
-		return
-	}
-	if expires != "" {
-		expiresInt, err := strconv.ParseInt(expires, 10, 64)
-		if err != nil {
-			err = errors.New("bad expiration")
-			return err
-		}
-
-		if expiresInt < time.Now().Unix() {
-			err = errors.New("link expired")
-			return err
-		}
-	}
-	if host != "" {
-		if host != userHost {
-			err = errors.New(fmt.Sprintf("only downloads from %s allowed, you are %s", host, userHost))
-			return
-		}
-	}
-	if domain != "" {
-		refererUrl, err := url.Parse(referer)
-		refererHost := strings.Split(refererUrl.Host, ":")[0]
-		if err == nil && !strings.Contains(refererUrl.Host, domain) {
-			err = errors.New(fmt.Sprintf("bad ref %s, should be %s", refererHost, domain))
-			return err
-		}
-	}
-	correctSig := Sign(secret, path, modified, expires, host, domain)
-	if correctSig != sig {
-		err = errors.New("auth failed")
-		return err
-	}
-	return
+type SigParams struct {
+	Host        string
+	Method      string
+	Path        string
+	Modified    time.Time
+	Expires     time.Time
+	RefererHost string
+	UserHost    string
 }
 
-func Sign(secret, path, modified, expires, host, domain string) string {
-	toSign := strings.Join([]string{path, modified, expires, host, domain}, "&")
+func Sign(secret string, p SigParams) string {
+	toSign := strings.Join([]string{p.Host, p.Method, p.Path, timeToStr(p.Modified), timeToStr(p.Expires), p.UserHost, p.RefererHost}, "&")
 	return hashString(secret + hashString(toSign))
 }
 
-func GetSignedUrl(secret string, baseUrl string, path string, host string,
-	domain string, modified *time.Time, expires *time.Time) (signedUrl string, err error) {
-	path = TrimPath(path)
-	parsedBaseUrl, err := url.Parse(baseUrl)
+func timeToStr(t time.Time) string {
+	return strconv.FormatInt(t.Unix(), 10)
+}
+
+func GetSignedUrl(secret string, cdnUrl string, p SigParams) (signedUrl string, err error) {
+	parsedBaseUrl, err := url.Parse(cdnUrl)
 	if err != nil {
 		return
 	}
+	p.Host = parsedBaseUrl.Host
 	q := parsedBaseUrl.Query()
-	q.Set("host", host)
-	q.Set("domain", domain)
-	modifiedStr := "0"
-	if modified != nil {
-		modifiedStr = strconv.FormatInt(modified.Unix(), 10)
-	}
-	q.Set("modified", modifiedStr)
-	expiresStr := ""
-	if expires != nil {
-		expiresStr = strconv.FormatInt(expires.Unix(), 10)
-	}
-	q.Set("expires", expiresStr)
-	q.Set("sig", Sign(secret, path, modifiedStr, expiresStr, host, domain))
+	q.Set(UserHostParam, p.UserHost)
+	q.Set(RefererHostParam, p.RefererHost)
+	q.Set(ModifiedParam, timeToStr(p.Modified))
+	q.Set(ExpiresParam, timeToStr(p.Expires))
+	q.Set(SigParam, Sign(secret, p))
 	newUrl := url.URL{
 		Scheme:   parsedBaseUrl.Scheme,
 		User:     parsedBaseUrl.User,
 		Host:     parsedBaseUrl.Host,
-		Path:     path,
+		Path:     TrimPath(p.Path),
 		RawQuery: q.Encode(),
 		Fragment: parsedBaseUrl.Fragment,
 	}
 	signedUrl = newUrl.String()
+	return
+}
+
+func UnixTimeStrToTime(s string) (t time.Time, err error) {
+	t = ZeroTime()
+	if s != "" {
+		tInt, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return t, err
+		}
+		t = time.Unix(tInt, 0)
+	}
+	return
+}
+
+func ZeroTime() time.Time {
+	return time.Unix(0, 0)
+}
+
+func ParseAndAuthenticateSignedUrl(secret string, method string, signedUrl string) (sigParams SigParams, err error) {
+	parsedUrl, err := url.Parse(signedUrl)
+	if err != nil {
+		return
+	}
+	q := parsedUrl.Query()
+
+	modifiedAt, err := UnixTimeStrToTime(q.Get(ModifiedParam))
+	if err != nil {
+		return
+	}
+
+	expiresAt, err := UnixTimeStrToTime(q.Get(ExpiresParam))
+	if err != nil {
+		return
+	}
+
+	sigParams = SigParams{
+		Host:        parsedUrl.Host,
+		Method:      method,
+		Path:        TrimPath(parsedUrl.Path),
+		Modified:    modifiedAt,
+		Expires:     expiresAt,
+		UserHost:    q.Get(UserHostParam),
+		RefererHost: q.Get(RefererHostParam),
+	}
+	sig := Sign(secret, sigParams)
+	if sig != q.Get(SigParam) {
+		err = errors.New("bad sig")
+	}
 	return
 }

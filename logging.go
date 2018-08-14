@@ -52,13 +52,6 @@ func WriteError(w io.Writer, req *http.Request, ts time.Time, status int, err er
 		err.Error())))
 }
 
-func WriteResponseError(log io.Writer, w http.ResponseWriter, r *http.Request, status int, err error) {
-	if status == http.StatusInternalServerError {
-		WriteError(log, r, time.Now(), status, err)
-	}
-	http.Error(w, fmt.Sprintf("%d: something went wrong", status), status)
-}
-
 func buildCommonLogLine(req *http.Request, url url.URL, ts time.Time, status int, size int64) []byte {
 	username := "-"
 	if url.User != nil {
